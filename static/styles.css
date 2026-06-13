@@ -551,11 +551,12 @@ img {
   text-transform: uppercase;
 }
 
-.menu-table th:nth-child(1) { width: 88px; }
-.menu-table th:nth-child(2) { width: 34%; }
-.menu-table th:nth-child(3) { width: 19%; }
-.menu-table th:nth-child(4) { width: 230px; }
-.menu-table th:nth-child(5) { width: 145px; }
+.menu-table th:nth-child(1) { width: 68px; }
+.menu-table th:nth-child(2) { width: 88px; }
+.menu-table th:nth-child(3) { width: 31%; }
+.menu-table th:nth-child(4) { width: 18%; }
+.menu-table th:nth-child(5) { width: 220px; }
+.menu-table th:nth-child(6) { width: 130px; }
 
 .menu-table td strong,
 .menu-table td small {
@@ -587,6 +588,49 @@ img {
   place-items: center;
   font-family: var(--display);
   font-size: 1.6rem;
+}
+
+.order-controls {
+  display: flex;
+  gap: 5px;
+}
+
+.order-controls form {
+  margin: 0;
+}
+
+.order-button {
+  display: grid;
+  width: 25px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  color: var(--black);
+  background: var(--white);
+  border: 1px solid var(--black);
+  cursor: pointer;
+}
+
+.order-button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+  stroke-width: 1.8;
+}
+
+.order-button:hover:not(:disabled),
+.order-button:focus-visible:not(:disabled) {
+  color: var(--white);
+  background: var(--black);
+}
+
+.order-button:disabled {
+  color: var(--gray-300);
+  border-color: var(--gray-300);
+  cursor: not-allowed;
 }
 
 .status-toggle {
@@ -861,8 +905,8 @@ code {
     padding-inline: 25px;
   }
 
-  .menu-table th:nth-child(3),
-  .menu-table td:nth-child(3) {
+  .menu-table th:nth-child(4),
+  .menu-table td:nth-child(4) {
     display: none;
   }
 }
@@ -1044,7 +1088,7 @@ code {
 
   .menu-table tr {
     display: grid;
-    grid-template-columns: 82px 1fr;
+    grid-template-columns: 44px 76px 1fr;
     padding: 13px;
     border: 1px solid var(--black);
     border-bottom: 0;
@@ -1060,17 +1104,33 @@ code {
   }
 
   .menu-table td:nth-child(1) {
+    grid-column: 1;
     grid-row: 1 / 4;
   }
 
-  .menu-table td:nth-child(2),
-  .menu-table td:nth-child(4),
-  .menu-table td:nth-child(5) {
+  .menu-table td:nth-child(2) {
     grid-column: 2;
+    grid-row: 1 / 4;
   }
 
-  .menu-table td:nth-child(3) {
+  .menu-table td:nth-child(3),
+  .menu-table td:nth-child(5),
+  .menu-table td:nth-child(6) {
+    grid-column: 3;
+  }
+
+  .menu-table td:nth-child(4) {
     display: none;
+  }
+
+  .order-controls {
+    display: grid;
+    gap: 6px;
+  }
+
+  .order-button {
+    width: 34px;
+    height: 34px;
   }
 
   .table-thumb {

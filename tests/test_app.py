@@ -50,6 +50,12 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(b"Hard Drinks", response.data)
         self.assertIn(b"Soft Drinks", response.data)
         self.assertIn(b"25 items available", response.data)
+        image_paths = re.findall(rb'<img src="([^"]+)"', response.data)
+        self.assertEqual(len(image_paths), 25)
+        for image_path in image_paths:
+            image_response = self.client.get(image_path.decode())
+            self.assertEqual(image_response.status_code, 200)
+            image_response.close()
         self.assertEqual(self.client.get("/health").json, {"status": "ok"})
 
     def test_host_can_add_and_disable_item(self):
@@ -144,7 +150,77 @@ class MenuAppTestCase(unittest.TestCase):
             self.assertNotIn("Negroni", names)
             self.assertIn("Espresso Martini", names)
             self.assertIn("Cola", names)
-            self.assertEqual(version, "2")
+            self.assertEqual(version, "3")
+
+    def test_image_migration_fills_blanks_without_overwriting_custom_images(self):
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            db.execute(
+                "UPDATE menu_items SET image = '' WHERE name = 'Espresso Martini'"
+            )
+            db.execute(
+                "UPDATE menu_items SET image = '/uploads/custom.jpg' WHERE name = 'Whiskey Sour'"
+            )
+            db.execute(
+                "UPDATE app_meta SET value = '2' WHERE key = 'catalog_version'"
+            )
+            db.commit()
+
+        create_app(
+            {
+                "TESTING": True,
+                "SECRET_KEY": "test-secret",
+                "ADMIN_PASSWORD": "party-password",
+                "DATA_DIR": self.temp_dir.name,
+            }
+        )
+
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            images = {
+                row["name"]: row["image"]
+                for row in db.execute(
+                    "SELECT name, image FROM menu_items WHERE name IN (?, ?)",
+                    ("Espresso Martini", "Whiskey Sour"),
+                ).fetchall()
+            }
+            version = db.execute(
+                "SELECT value FROM app_meta WHERE key = 'catalog_version'"
+            ).fetchone()[0]
+
+        self.assertEqual(images["Espresso Martini"], "/static/seed/espresso-martini.jpg")
+        self.assertEqual(images["Whiskey Sour"], "/uploads/custom.jpg")
+        self.assertEqual(version, "3")
+
+    def test_host_can_reorder_items_within_a_category(self):
+        self.login()
+        with self.app.app_context():
+            from app import get_db
+
+            whiskey_sour_id = get_db().execute(
+                "SELECT id FROM menu_items WHERE name = 'Whiskey Sour'"
+            ).fetchone()[0]
+
+        token = self.token_from("/host?category=Cocktails")
+        response = self.client.post(
+            f"/host/item/{whiskey_sour_id}/move/up",
+            data={
+                "csrf_token": token,
+                "return_to": "/host?category=Cocktails",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn(b"Moved Whiskey Sour up", response.data)
+
+        public_response = self.client.get("/")
+        self.assertLess(
+            public_response.data.index(b"Whiskey Sour"),
+            public_response.data.index(b"Espresso Martini"),
+        )
 
     def test_bulk_csv_import(self):
         self.login()

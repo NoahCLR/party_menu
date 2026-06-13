@@ -43,134 +43,134 @@ CATEGORIES = (
 )
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
-CATALOG_VERSION = "2"
+CATALOG_VERSION = "3"
 
 SEED_ITEMS = (
     (
         "Espresso Martini",
         "Vodka, espresso, and coffee liqueur.",
         "Cocktails",
-        "",
+        "/static/seed/espresso-martini.jpg",
         1,
     ),
     (
         "Whiskey Sour",
         "Whiskey, fresh lemon, and sugar.",
         "Cocktails",
-        "",
+        "/static/seed/whiskey-sour.jpg",
         1,
     ),
     (
         "Mudslide",
         "Vodka, coffee liqueur, cream liqueur, and cream.",
         "Cocktails",
-        "",
+        "/static/seed/mudslide.jpg",
         1,
     ),
     (
         "White Russian",
         "Vodka, coffee liqueur, and cream.",
         "Cocktails",
-        "",
+        "/static/seed/white-russian.jpg",
         1,
     ),
     (
         "Pornstar Martini",
         "Vodka, passion fruit, vanilla, and lime.",
         "Cocktails",
-        "",
+        "/static/seed/pornstar-martini.jpg",
         1,
     ),
     (
         "Lemon Pie",
         "A sweet and creamy lemon cocktail.",
         "Cocktails",
-        "",
+        "/static/seed/lemon-pie.jpg",
         1,
     ),
     (
         "Moscow Mule",
         "Vodka, ginger beer, and fresh lime.",
         "Cocktails",
-        "",
+        "/static/seed/moscow-mule.jpg",
         1,
     ),
     (
         "Gin & Tonic",
         "Gin, tonic, and fresh citrus.",
         "Cocktails",
-        "",
+        "/static/seed/gin-tonic.jpg",
         1,
     ),
     (
         "Sangria",
         "Wine, fruit, and citrus.",
         "Cocktails",
-        "",
+        "/static/seed/sangria.jpg",
         1,
     ),
     (
         "White Wine - Pinot Grigio",
         "Crisp and refreshing white wine.",
         "Booze, Beer & Wine",
-        "",
+        "/static/seed/pinot-grigio.jpg",
         1,
     ),
     (
         "Red Wine - Cabernet Sauvignon",
         "A full-bodied red wine.",
         "Booze, Beer & Wine",
-        "",
+        "/static/seed/cabernet-sauvignon.jpg",
         1,
     ),
-    ("Vodka", "Available neat or over ice.", "Hard Drinks", "", 1),
-    ("Whiskey", "Available neat or over ice.", "Hard Drinks", "", 1),
-    ("Rum", "Available neat or over ice.", "Hard Drinks", "", 1),
-    ("Gin", "Available neat or over ice.", "Hard Drinks", "", 1),
-    ("Cola", "Served chilled.", "Soft Drinks", "", 1),
-    ("Fanta", "Served chilled.", "Soft Drinks", "", 1),
-    ("Iced Tea - Green", "Served chilled.", "Soft Drinks", "", 1),
-    ("Iced Tea - Peach", "Served chilled.", "Soft Drinks", "", 1),
+    ("Vodka", "Available neat or over ice.", "Hard Drinks", "/static/seed/vodka.jpg", 1),
+    ("Whiskey", "Available neat or over ice.", "Hard Drinks", "/static/seed/whiskey.jpg", 1),
+    ("Rum", "Available neat or over ice.", "Hard Drinks", "/static/seed/rum.jpg", 1),
+    ("Gin", "Available neat or over ice.", "Hard Drinks", "/static/seed/gin.jpg", 1),
+    ("Cola", "Served chilled.", "Soft Drinks", "/static/seed/cola.jpg", 1),
+    ("Fanta", "Served chilled.", "Soft Drinks", "/static/seed/fanta.jpg", 1),
+    ("Iced Tea - Green", "Served chilled.", "Soft Drinks", "/static/seed/iced-tea-green.jpg", 1),
+    ("Iced Tea - Peach", "Served chilled.", "Soft Drinks", "/static/seed/iced-tea-peach.jpg", 1),
     (
         "Cashew Nuts",
         "Roasted cashew nuts.",
         "Snacks",
-        "",
+        "/static/seed/cashew-nuts.jpg",
         1,
     ),
     (
         "Pistachio Nuts",
         "Roasted pistachio nuts.",
         "Snacks",
-        "",
+        "/static/seed/pistachio-nuts.jpg",
         1,
     ),
     (
         "Naturel Chips",
         "Classic salted potato chips.",
         "Snacks",
-        "",
+        "/static/seed/naturel-chips.jpg",
         1,
     ),
     (
         "Paprika Chips",
         "Paprika-seasoned potato chips.",
         "Snacks",
-        "",
+        "/static/seed/paprika-chips.jpg",
         1,
     ),
     (
         "Garlic Olives",
         "Olives marinated with garlic.",
         "Snacks",
-        "",
+        "/static/seed/garlic-olives.jpg",
         1,
     ),
     (
         "Jonge Kaasblokjes",
         "Cubes of young Dutch cheese.",
         "Snacks",
-        "",
+        "/static/seed/jonge-kaasblokjes.jpg",
         1,
     ),
 )
@@ -254,10 +254,11 @@ def init_db() -> None:
     )
     db.execute("BEGIN IMMEDIATE")
     count = db.execute("SELECT COUNT(*) FROM menu_items").fetchone()[0]
-    catalog_version = db.execute(
+    catalog_version_row = db.execute(
         "SELECT value FROM app_meta WHERE key = 'catalog_version'"
     ).fetchone()
-    if catalog_version is None:
+    catalog_version = int(catalog_version_row["value"]) if catalog_version_row else 0
+    if catalog_version < 2:
         if count:
             db.executemany(
                 "DELETE FROM menu_items WHERE name = ? AND image = ?",
@@ -282,10 +283,22 @@ def init_db() -> None:
                 """,
                 (*item, next_order),
             )
-        db.execute(
-            "INSERT INTO app_meta (key, value) VALUES ('catalog_version', ?)",
-            (CATALOG_VERSION,),
+    if catalog_version < 3:
+        db.executemany(
+            """
+            UPDATE menu_items
+            SET image = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE name = ? AND category = ? AND image = ''
+            """,
+            [(item[3], item[0], item[2]) for item in SEED_ITEMS],
         )
+    db.execute(
+        """
+        INSERT INTO app_meta (key, value) VALUES ('catalog_version', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (CATALOG_VERSION,),
+    )
     db.commit()
 
 
@@ -390,6 +403,17 @@ def category_order_sql() -> str:
     return f"CASE category {clauses} ELSE {len(CATEGORIES) + 1} END"
 
 
+def normalize_category_order(db: sqlite3.Connection, category: str) -> None:
+    rows = db.execute(
+        "SELECT id FROM menu_items WHERE category = ? ORDER BY sort_order, id",
+        (category,),
+    ).fetchall()
+    db.executemany(
+        "UPDATE menu_items SET sort_order = ? WHERE id = ?",
+        [(index, row["id"]) for index, row in enumerate(rows, start=1)],
+    )
+
+
 def register_routes(app: Flask) -> None:
     @app.before_request
     def check_csrf():
@@ -471,17 +495,36 @@ def register_routes(app: Flask) -> None:
             f"SELECT * FROM menu_items {where} ORDER BY {category_order_sql()}, sort_order, id",
             values,
         ).fetchall()
-        all_rows = get_db().execute("SELECT category, available FROM menu_items").fetchall()
+        db = get_db()
+        all_rows = db.execute("SELECT id, category, available FROM menu_items").fetchall()
         counts = {
             "all": len(all_rows),
             "available": sum(row["available"] for row in all_rows),
             "out": sum(not row["available"] for row in all_rows),
             **{category: sum(row["category"] == category for row in all_rows) for category in CATEGORIES},
         }
-        items_json = [dict(row) for row in rows]
+        order_rows = db.execute(
+            f"SELECT id, category FROM menu_items ORDER BY {category_order_sql()}, sort_order, id"
+        ).fetchall()
+        category_ids = {category: [] for category in CATEGORIES}
+        for row in order_rows:
+            category_ids.setdefault(row["category"], []).append(row["id"])
+        positions = {
+            item_id: (index, len(ids))
+            for ids in category_ids.values()
+            for index, item_id in enumerate(ids)
+        }
+        items_for_template = []
+        for row in rows:
+            item = dict(row)
+            position, category_count = positions[item["id"]]
+            item["can_move_up"] = position > 0
+            item["can_move_down"] = position < category_count - 1
+            items_for_template.append(item)
+        items_json = items_for_template
         return render_template(
             "host.html",
-            items=rows,
+            items=items_for_template,
             items_json=items_json,
             counts=counts,
             selected_category=selected_category,
@@ -512,24 +555,39 @@ def register_routes(app: Flask) -> None:
 
         db = get_db()
         if item_id:
-            old = db.execute("SELECT image FROM menu_items WHERE id = ?", (item_id,)).fetchone()
+            old = db.execute(
+                "SELECT image, category, sort_order FROM menu_items WHERE id = ?",
+                (item_id,),
+            ).fetchone()
             if old is None:
                 abort(404)
+            sort_order = old["sort_order"]
+            if old["category"] != category:
+                sort_order = db.execute(
+                    "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM menu_items WHERE category = ?",
+                    (category,),
+                ).fetchone()[0]
             db.execute(
                 """
                 UPDATE menu_items
-                SET name = ?, description = ?, category = ?, image = ?, available = ?,
+                SET name = ?, description = ?, category = ?, image = ?, available = ?, sort_order = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (name, description, category, image, available, item_id),
+                (name, description, category, image, available, sort_order, item_id),
             )
+            if old["category"] != category:
+                normalize_category_order(db, old["category"])
+                normalize_category_order(db, category)
             db.commit()
             if old["image"] != image:
                 delete_uploaded_image(old["image"])
             flash(f"Updated {name}.", "success")
         else:
-            next_order = db.execute("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM menu_items").fetchone()[0]
+            next_order = db.execute(
+                "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM menu_items WHERE category = ?",
+                (category,),
+            ).fetchone()[0]
             db.execute(
                 """
                 INSERT INTO menu_items
@@ -558,14 +616,61 @@ def register_routes(app: Flask) -> None:
         flash(f"{item['name']} is now {'available' if new_value else 'out'}.", "success")
         return redirect(request.referrer or url_for("host_editor"))
 
+    @app.post("/host/item/<int:item_id>/move/<direction>")
+    @host_required
+    def move_item(item_id: int, direction: str):
+        if direction not in {"up", "down"}:
+            abort(404)
+        db = get_db()
+        item = db.execute(
+            "SELECT id, name, category FROM menu_items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        if item is None:
+            abort(404)
+
+        normalize_category_order(db, item["category"])
+        current = db.execute(
+            "SELECT sort_order FROM menu_items WHERE id = ?",
+            (item_id,),
+        ).fetchone()[0]
+        neighbor_order = current - 1 if direction == "up" else current + 1
+        neighbor = db.execute(
+            "SELECT id FROM menu_items WHERE category = ? AND sort_order = ?",
+            (item["category"], neighbor_order),
+        ).fetchone()
+        if neighbor is not None:
+            db.execute(
+                "UPDATE menu_items SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (-1, item_id),
+            )
+            db.execute(
+                "UPDATE menu_items SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (current, neighbor["id"]),
+            )
+            db.execute(
+                "UPDATE menu_items SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (neighbor_order, item_id),
+            )
+            db.commit()
+            flash(f"Moved {item['name']} {direction}.", "success")
+
+        return_to = request.form.get("return_to", "")
+        if not return_to.startswith("/host"):
+            return_to = url_for("host_editor", category=item["category"])
+        return redirect(return_to)
+
     @app.post("/host/item/<int:item_id>/delete")
     @host_required
     def delete_item(item_id: int):
         db = get_db()
-        item = db.execute("SELECT name, image FROM menu_items WHERE id = ?", (item_id,)).fetchone()
+        item = db.execute(
+            "SELECT name, image, category FROM menu_items WHERE id = ?", (item_id,)
+        ).fetchone()
         if item is None:
             abort(404)
         db.execute("DELETE FROM menu_items WHERE id = ?", (item_id,))
+        normalize_category_order(db, item["category"])
         db.commit()
         delete_uploaded_image(item["image"])
         flash(f"Deleted {item['name']}.", "success")

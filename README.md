@@ -1,13 +1,15 @@
 # Tonight's Menu
 
-A mobile-first party menu with a password-protected host editor. Guests browse the menu; the host can add, edit, disable, delete, upload, and bulk-import items.
+A mobile-first party menu with a password-protected host editor. Guests browse the menu; the host can add, edit, reorder, disable, delete, upload, and bulk-import items.
 
 ## Features
 
 - Public categories: Cocktails, Booze, Beer & Wine, Hard Drinks, Soft Drinks, and Snacks
 - Clear `Out` state without removing an item
 - Host login controlled by an environment password
+- Reorder items within each category
 - Single-item image upload or external image URL
+- Generated photos for every built-in menu item
 - Bulk CSV import with image URLs
 - Bulk ZIP import containing `menu.csv` plus local photos
 - SQLite database and uploaded images stored in a persistent Docker volume
