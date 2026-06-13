@@ -53,15 +53,13 @@
                     {% if not item['available'] %}<span class="out-label">Out</span>{% endif %}
                   </div>
                   {% if item['description'] %}<p>{{ item['description'] }}</p>{% endif %}
-                  <form class="menu-order-form" method="post" action="{{ url_for('order_item', item_id=item['id']) }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button
-                      class="menu-order-button"
-                      type="submit"
-                      aria-label="Order {{ item['name'] }}"
-                      {% if not item['available'] %}disabled{% endif %}
-                    >{% if item['available'] %}Order{% else %}Unavailable{% endif %}</button>
-                  </form>
+                  <div class="menu-order-form">
+                    {% if item['available'] %}
+                      <a class="menu-order-button" href="{{ url_for('order_item', item_id=item['id']) }}" aria-label="Order {{ item['name'] }}">Order</a>
+                    {% else %}
+                      <span class="menu-order-button is-disabled" aria-disabled="true">Unavailable</span>
+                    {% endif %}
+                  </div>
                 </div>
               </article>
             {% endfor %}

@@ -70,14 +70,19 @@ class MenuAppTestCase(unittest.TestCase):
         response = io.BytesIO(b'{"status": 1}')
 
         with self.app.app_context(), patch("app.urlopen", return_value=response) as mocked:
-            send_pushover_order("Espresso Martini", "Cocktails")
+            send_pushover_order(
+                "Espresso Martini", "Cocktails", "Noah", "Less ice, please"
+            )
 
         pushover_request = mocked.call_args.args[0]
         payload = parse_qs(pushover_request.data.decode())
         self.assertEqual(payload["token"], ["application-token"])
         self.assertEqual(payload["user"], ["user-key"])
-        self.assertEqual(payload["title"], ["New party order"])
-        self.assertEqual(payload["message"], ["Espresso Martini\nCategory: Cocktails"])
+        self.assertEqual(payload["title"], ["Order from Noah"])
+        self.assertEqual(
+            payload["message"],
+            ["Item: Espresso Martini\nCategory: Cocktails\nNote: Less ice, please"],
+        )
         self.assertEqual(mocked.call_args.kwargs["timeout"], 5)
 
     def test_guest_can_order_available_item(self):
@@ -88,16 +93,45 @@ class MenuAppTestCase(unittest.TestCase):
                 "SELECT id FROM menu_items WHERE name = 'Espresso Martini'"
             ).fetchone()[0]
 
-        token = self.token_from("/")
+        order_page = self.client.get(f"/order/item/{item_id}")
+        self.assertIn(b"Your name", order_page.data)
+        self.assertIn(b"Note", order_page.data)
+        token = self.token_from(f"/order/item/{item_id}")
         with patch("app.send_pushover_order") as send_order:
             response = self.client.post(
                 f"/order/item/{item_id}",
-                data={"csrf_token": token},
+                data={
+                    "csrf_token": token,
+                    "guest_name": "Noah",
+                    "note": "Less ice, please",
+                },
                 follow_redirects=True,
             )
 
-        self.assertIn(b"Order sent: Espresso Martini.", response.data)
-        send_order.assert_called_once_with("Espresso Martini", "Cocktails")
+        self.assertIn(b"Order sent for Noah: Espresso Martini.", response.data)
+        send_order.assert_called_once_with(
+            "Espresso Martini", "Cocktails", "Noah", "Less ice, please"
+        )
+
+    def test_guest_name_is_required_before_sending(self):
+        with self.app.app_context():
+            from app import get_db
+
+            item_id = get_db().execute(
+                "SELECT id FROM menu_items WHERE name = 'Espresso Martini'"
+            ).fetchone()[0]
+
+        token = self.token_from(f"/order/item/{item_id}")
+        with patch("app.send_pushover_order") as send_order:
+            response = self.client.post(
+                f"/order/item/{item_id}",
+                data={"csrf_token": token, "guest_name": "", "note": "No ice"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"Enter your name before sending the order.", response.data)
+        self.assertIn(b"No ice", response.data)
+        send_order.assert_not_called()
 
     def test_guest_cannot_order_unavailable_item(self):
         with self.app.app_context():
@@ -110,11 +144,11 @@ class MenuAppTestCase(unittest.TestCase):
             db.execute("UPDATE menu_items SET available = 0 WHERE id = ?", (item_id,))
             db.commit()
 
-        token = self.token_from("/")
+        token = self.token_from("/host/login")
         with patch("app.send_pushover_order") as send_order:
             response = self.client.post(
                 f"/order/item/{item_id}",
-                data={"csrf_token": token},
+                data={"csrf_token": token, "guest_name": "Noah", "note": ""},
                 follow_redirects=True,
             )
 
@@ -134,20 +168,20 @@ class MenuAppTestCase(unittest.TestCase):
                 ).fetchall()
             ]
 
-        token = self.token_from("/")
+        token = self.token_from(f"/order/item/{item_ids[0]}")
         with patch("app.send_pushover_order") as send_order:
             first_response = self.client.post(
                 f"/order/item/{item_ids[0]}",
-                data={"csrf_token": token},
+                data={"csrf_token": token, "guest_name": "Noah", "note": ""},
                 follow_redirects=True,
             )
             second_response = self.client.post(
                 f"/order/item/{item_ids[1]}",
-                data={"csrf_token": token},
+                data={"csrf_token": token, "guest_name": "Noah", "note": ""},
                 follow_redirects=True,
             )
 
-        self.assertIn(b"Order sent:", first_response.data)
+        self.assertIn(b"Order sent for Noah:", first_response.data)
         self.assertIn(b"Please wait a few seconds", second_response.data)
         self.assertEqual(send_order.call_count, 1)
 
@@ -159,10 +193,10 @@ class MenuAppTestCase(unittest.TestCase):
                 "SELECT id FROM menu_items WHERE name = 'Espresso Martini'"
             ).fetchone()[0]
 
-        token = self.token_from("/")
+        token = self.token_from(f"/order/item/{item_id}")
         response = self.client.post(
             f"/order/item/{item_id}",
-            data={"csrf_token": token},
+            data={"csrf_token": token, "guest_name": "Noah", "note": ""},
             follow_redirects=True,
         )
 

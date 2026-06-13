@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}Order {{ item['name'] }} · Tonight's Menu{% endblock %}
+{% block body_class %}public-page order-page{% endblock %}
+
+{% block body %}
+  <main class="order-shell">
+    <a class="order-brand" href="{{ url_for('menu') }}">Tonight's Menu</a>
+    <section class="order-panel">
+      <p class="order-kicker">Your order</p>
+      <h1>{{ item['name'] }}</h1>
+      <p>{{ item['description'] if item['description'] else item['category'] }}</p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+          <div class="order-flash {{ category }}" role="alert">{{ message }}</div>
+        {% endfor %}
+      {% endwith %}
+
+      <form method="post" class="order-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="guest_name">
+          Your name
+          <input id="guest_name" name="guest_name" value="{{ guest_name }}" maxlength="80" autocomplete="name" autofocus required>
+        </label>
+        <label for="note">
+          Note <span>Optional</span>
+          <textarea id="note" name="note" maxlength="300" rows="4" placeholder="For example: no ice">{{ note }}</textarea>
+        </label>
+        <button class="order-submit" type="submit">Send order</button>
+      </form>
+      <a class="order-back" href="{{ url_for('menu') }}">Back to menu</a>
+    </section>
+  </main>
+{% endblock %}

@@ -530,7 +530,9 @@ def normalize_category_positions(db: sqlite3.Connection) -> None:
     )
 
 
-def send_pushover_order(name: str, category: str) -> None:
+def send_pushover_order(
+    item_name: str, category: str, guest_name: str, note: str
+) -> None:
     token = current_app.config["PUSHOVER_API_TOKEN"]
     user_key = current_app.config["PUSHOVER_USER_KEY"]
     if not token or not user_key:
@@ -540,8 +542,11 @@ def send_pushover_order(name: str, category: str) -> None:
         {
             "token": token,
             "user": user_key,
-            "title": "New party order",
-            "message": f"{name}\nCategory: {category}",
+            "title": f"Order from {guest_name}",
+            "message": (
+                f"Item: {item_name}\nCategory: {category}"
+                + (f"\nNote: {note}" if note else "")
+            ),
         }
     ).encode("utf-8")
     pushover_request = Request(
@@ -603,10 +608,10 @@ def register_routes(app: Flask) -> None:
         get_db().execute("SELECT 1").fetchone()
         return {"status": "ok"}
 
-    @app.post("/order/item/<int:item_id>")
+    @app.route("/order/item/<int:item_id>", methods=("GET", "POST"))
     def order_item(item_id: int):
         item = get_db().execute(
-            "SELECT name, category, available FROM menu_items WHERE id = ?",
+            "SELECT name, description, category, available FROM menu_items WHERE id = ?",
             (item_id,),
         ).fetchone()
         if item is None:
@@ -615,20 +620,46 @@ def register_routes(app: Flask) -> None:
             flash(f"{item['name']} is currently out.", "error")
             return redirect(url_for("menu"))
 
+        if request.method == "GET":
+            return render_template("order.html", item=item, guest_name="", note="")
+
+        guest_name = " ".join(request.form.get("guest_name", "").strip().split())
+        note = request.form.get("note", "").strip()
+        if not guest_name:
+            flash("Enter your name before sending the order.", "error")
+            return render_template(
+                "order.html", item=item, guest_name=guest_name, note=note
+            ), 400
+        if len(guest_name) > 80:
+            flash("Your name may not exceed 80 characters.", "error")
+            return render_template(
+                "order.html", item=item, guest_name=guest_name, note=note
+            ), 400
+        if len(note) > 300:
+            flash("The note may not exceed 300 characters.", "error")
+            return render_template(
+                "order.html", item=item, guest_name=guest_name, note=note
+            ), 400
+
         now = time.time()
         last_order_at = session.get("last_order_at", 0)
         if now - last_order_at < current_app.config["ORDER_COOLDOWN_SECONDS"]:
             flash("Please wait a few seconds before ordering again.", "error")
-            return redirect(url_for("menu"))
+            return render_template(
+                "order.html", item=item, guest_name=guest_name, note=note
+            ), 429
 
         try:
-            send_pushover_order(item["name"], item["category"])
+            send_pushover_order(item["name"], item["category"], guest_name, note)
         except PushoverError as error:
             current_app.logger.warning("Could not send order: %s", error)
             flash("The order could not be sent. Please tell the host.", "error")
+            return render_template(
+                "order.html", item=item, guest_name=guest_name, note=note
+            ), 502
         else:
             session["last_order_at"] = now
-            flash(f"Order sent: {item['name']}.", "success")
+            flash(f"Order sent for {guest_name}: {item['name']}.", "success")
         return redirect(url_for("menu"))
 
     @app.get("/uploads/<path:filename>")
