@@ -34,60 +34,155 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR / "data"))
 UPLOAD_DIR = DATA_DIR / "uploads"
 DATABASE = DATA_DIR / "menu.db"
 
-CATEGORIES = ("Cocktails", "Booze, Beer & Wine", "Snacks")
+CATEGORIES = (
+    "Cocktails",
+    "Booze, Beer & Wine",
+    "Hard Drinks",
+    "Soft Drinks",
+    "Snacks",
+)
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+CATALOG_VERSION = "2"
 
 SEED_ITEMS = (
     (
-        "Negroni",
-        "Gin, Campari, sweet vermouth, and an orange twist.",
+        "Espresso Martini",
+        "Vodka, espresso, and coffee liqueur.",
         "Cocktails",
-        "/static/seed/negroni.jpg",
+        "",
         1,
     ),
     (
-        "Paloma",
-        "Tequila, grapefruit, lime, soda, and a pinch of salt.",
+        "Whiskey Sour",
+        "Whiskey, fresh lemon, and sugar.",
         "Cocktails",
-        "/static/seed/paloma.jpg",
+        "",
         1,
     ),
     (
-        "Cold Beer",
-        "A cold, crisp selection of lager and pale ale.",
+        "Mudslide",
+        "Vodka, coffee liqueur, cream liqueur, and cream.",
+        "Cocktails",
+        "",
+        1,
+    ),
+    (
+        "White Russian",
+        "Vodka, coffee liqueur, and cream.",
+        "Cocktails",
+        "",
+        1,
+    ),
+    (
+        "Pornstar Martini",
+        "Vodka, passion fruit, vanilla, and lime.",
+        "Cocktails",
+        "",
+        1,
+    ),
+    (
+        "Lemon Pie",
+        "A sweet and creamy lemon cocktail.",
+        "Cocktails",
+        "",
+        1,
+    ),
+    (
+        "Moscow Mule",
+        "Vodka, ginger beer, and fresh lime.",
+        "Cocktails",
+        "",
+        1,
+    ),
+    (
+        "Gin & Tonic",
+        "Gin, tonic, and fresh citrus.",
+        "Cocktails",
+        "",
+        1,
+    ),
+    (
+        "Sangria",
+        "Wine, fruit, and citrus.",
+        "Cocktails",
+        "",
+        1,
+    ),
+    (
+        "White Wine - Pinot Grigio",
+        "Crisp and refreshing white wine.",
         "Booze, Beer & Wine",
-        "/static/seed/cold-beer.jpg",
+        "",
         1,
     ),
     (
-        "Red Wine",
-        "The host's smooth and balanced house red.",
+        "Red Wine - Cabernet Sauvignon",
+        "A full-bodied red wine.",
         "Booze, Beer & Wine",
-        "/static/seed/red-wine.jpg",
+        "",
+        1,
+    ),
+    ("Vodka", "Available neat or over ice.", "Hard Drinks", "", 1),
+    ("Whiskey", "Available neat or over ice.", "Hard Drinks", "", 1),
+    ("Rum", "Available neat or over ice.", "Hard Drinks", "", 1),
+    ("Gin", "Available neat or over ice.", "Hard Drinks", "", 1),
+    ("Cola", "Served chilled.", "Soft Drinks", "", 1),
+    ("Fanta", "Served chilled.", "Soft Drinks", "", 1),
+    ("Iced Tea - Green", "Served chilled.", "Soft Drinks", "", 1),
+    ("Iced Tea - Peach", "Served chilled.", "Soft Drinks", "", 1),
+    (
+        "Cashew Nuts",
+        "Roasted cashew nuts.",
+        "Snacks",
+        "",
         1,
     ),
     (
-        "Olives",
-        "Marinated mixed olives with herbs and citrus.",
+        "Pistachio Nuts",
+        "Roasted pistachio nuts.",
         "Snacks",
-        "/static/seed/olives.jpg",
+        "",
         1,
     ),
     (
-        "Crisps",
-        "Sea salt potato crisps. Simple and crunchy.",
+        "Naturel Chips",
+        "Classic salted potato chips.",
         "Snacks",
-        "/static/seed/crisps.jpg",
+        "",
         1,
     ),
     (
-        "Cheese Board",
-        "A selection of cheeses, crackers, nuts, and chutney.",
+        "Paprika Chips",
+        "Paprika-seasoned potato chips.",
         "Snacks",
-        "/static/seed/cheese-board.jpg",
+        "",
         1,
     ),
+    (
+        "Garlic Olives",
+        "Olives marinated with garlic.",
+        "Snacks",
+        "",
+        1,
+    ),
+    (
+        "Jonge Kaasblokjes",
+        "Cubes of young Dutch cheese.",
+        "Snacks",
+        "",
+        1,
+    ),
+)
+
+LEGACY_SEED_ITEMS = (
+    ("Negroni", "/static/seed/negroni.jpg"),
+    ("Paloma", "/static/seed/paloma.jpg"),
+    ("Cold Beer", "/static/seed/cold-beer.jpg"),
+    ("Red Wine", "/static/seed/red-wine.jpg"),
+    ("Olives", "/static/seed/olives.jpg"),
+    ("Crisps", "/static/seed/crisps.jpg"),
+    ("Cheese Board", "/static/seed/cheese-board.jpg"),
 )
 
 
@@ -151,18 +246,45 @@ def init_db() -> None:
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS app_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
         """
     )
     db.execute("BEGIN IMMEDIATE")
     count = db.execute("SELECT COUNT(*) FROM menu_items").fetchone()[0]
-    if count == 0:
-        db.executemany(
-            """
-            INSERT INTO menu_items
-                (name, description, category, image, available, sort_order)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            [(*item, index) for index, item in enumerate(SEED_ITEMS, start=1)],
+    catalog_version = db.execute(
+        "SELECT value FROM app_meta WHERE key = 'catalog_version'"
+    ).fetchone()
+    if catalog_version is None:
+        if count:
+            db.executemany(
+                "DELETE FROM menu_items WHERE name = ? AND image = ?",
+                LEGACY_SEED_ITEMS,
+            )
+        next_order = db.execute(
+            "SELECT COALESCE(MAX(sort_order), 0) FROM menu_items"
+        ).fetchone()[0]
+        for item in SEED_ITEMS:
+            existing = db.execute(
+                "SELECT 1 FROM menu_items WHERE name = ? AND category = ?",
+                (item[0], item[2]),
+            ).fetchone()
+            if existing:
+                continue
+            next_order += 1
+            db.execute(
+                """
+                INSERT INTO menu_items
+                    (name, description, category, image, available, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (*item, next_order),
+            )
+        db.execute(
+            "INSERT INTO app_meta (key, value) VALUES ('catalog_version', ?)",
+            (CATALOG_VERSION,),
         )
     db.commit()
 
@@ -200,6 +322,12 @@ def canonical_category(value: str) -> str | None:
         "beer": "Booze, Beer & Wine",
         "wine": "Booze, Beer & Wine",
         "drinks": "Booze, Beer & Wine",
+        "hard drink": "Hard Drinks",
+        "hard drinks": "Hard Drinks",
+        "spirits": "Hard Drinks",
+        "soft drink": "Soft Drinks",
+        "soft drinks": "Soft Drinks",
+        "soda": "Soft Drinks",
         "snack": "Snacks",
         "cocktail": "Cocktails",
     }
@@ -255,7 +383,11 @@ def delete_uploaded_image(image: str) -> None:
 
 
 def category_order_sql() -> str:
-    return "CASE category WHEN 'Cocktails' THEN 1 WHEN 'Booze, Beer & Wine' THEN 2 WHEN 'Snacks' THEN 3 ELSE 4 END"
+    clauses = " ".join(
+        f"WHEN '{category.replace(chr(39), chr(39) * 2)}' THEN {index}"
+        for index, category in enumerate(CATEGORIES, start=1)
+    )
+    return f"CASE category {clauses} ELSE {len(CATEGORIES) + 1} END"
 
 
 def register_routes(app: Flask) -> None:

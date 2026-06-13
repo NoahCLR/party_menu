@@ -4,7 +4,7 @@ A mobile-first party menu with a password-protected host editor. Guests browse t
 
 ## Features
 
-- Public categories: Cocktails, Booze, Beer & Wine, and Snacks
+- Public categories: Cocktails, Booze, Beer & Wine, Hard Drinks, Soft Drinks, and Snacks
 - Clear `Out` state without removing an item
 - Host login controlled by an environment password
 - Single-item image upload or external image URL

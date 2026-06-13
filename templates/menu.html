@@ -31,14 +31,12 @@
         {% if category_items %}
           <div class="menu-list">
             {% for item in category_items %}
-              <article class="menu-item{% if not item['available'] %} is-out{% endif %}">
-                <div class="item-image-wrap">
-                  {% if item['image'] %}
+              <article class="menu-item{% if not item['image'] %} no-image{% endif %}{% if not item['available'] %} is-out{% endif %}">
+                {% if item['image'] %}
+                  <div class="item-image-wrap">
                     <img src="{{ item['image'] }}" alt="{{ item['name'] }}" loading="lazy">
-                  {% else %}
-                    <div class="image-placeholder" aria-hidden="true">{{ item['name'][0] }}</div>
-                  {% endif %}
-                </div>
+                  </div>
+                {% endif %}
                 <div class="item-copy">
                   <div class="item-title-line">
                     <h3>{{ item['name'] }}</h3>

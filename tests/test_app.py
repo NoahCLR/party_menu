@@ -1,5 +1,6 @@
 import io
 import re
+import sqlite3
 import tempfile
 import unittest
 
@@ -45,7 +46,10 @@ class MenuAppTestCase(unittest.TestCase):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Tonight's Menu", response.data)
-        self.assertIn(b"Negroni", response.data)
+        self.assertIn(b"Espresso Martini", response.data)
+        self.assertIn(b"Hard Drinks", response.data)
+        self.assertIn(b"Soft Drinks", response.data)
+        self.assertIn(b"25 items available", response.data)
         self.assertEqual(self.client.get("/health").json, {"status": "ok"})
 
     def test_host_can_add_and_disable_item(self):
@@ -55,20 +59,20 @@ class MenuAppTestCase(unittest.TestCase):
             "/host/item/save",
             data={
                 "csrf_token": token,
-                "name": "Espresso Martini",
-                "description": "Vodka, espresso, and coffee liqueur.",
+                "name": "Tom Collins",
+                "description": "Gin, lemon, sugar, and soda.",
                 "category": "Cocktails",
                 "available": "1",
             },
             follow_redirects=True,
         )
-        self.assertIn(b"Added Espresso Martini", response.data)
+        self.assertIn(b"Added Tom Collins", response.data)
 
         with self.app.app_context():
             from app import get_db
 
             item_id = get_db().execute(
-                "SELECT id FROM menu_items WHERE name = ?", ("Espresso Martini",)
+                "SELECT id FROM menu_items WHERE name = ?", ("Tom Collins",)
             ).fetchone()[0]
 
         token = self.token_from("/host")
@@ -79,8 +83,68 @@ class MenuAppTestCase(unittest.TestCase):
         )
         self.assertIn(b"is now out", response.data)
         public_response = self.client.get("/")
-        self.assertIn(b"Espresso Martini", public_response.data)
+        self.assertIn(b"Tom Collins", public_response.data)
         self.assertIn(b"Out", public_response.data)
+
+    def test_existing_demo_database_is_migrated_once(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            database = sqlite3.connect(f"{data_dir}/menu.db")
+            database.execute(
+                """
+                CREATE TABLE menu_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    category TEXT NOT NULL,
+                    image TEXT NOT NULL DEFAULT '',
+                    available INTEGER NOT NULL DEFAULT 1,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            database.execute(
+                """
+                INSERT INTO menu_items
+                    (name, description, category, image, available, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "Negroni",
+                    "Demo item",
+                    "Cocktails",
+                    "/static/seed/negroni.jpg",
+                    1,
+                    1,
+                ),
+            )
+            database.commit()
+            database.close()
+
+            migrated_app = create_app(
+                {
+                    "TESTING": True,
+                    "SECRET_KEY": "test-secret",
+                    "ADMIN_PASSWORD": "party-password",
+                    "DATA_DIR": data_dir,
+                }
+            )
+            with migrated_app.app_context():
+                from app import get_db
+
+                db = get_db()
+                names = {
+                    row[0] for row in db.execute("SELECT name FROM menu_items").fetchall()
+                }
+                version = db.execute(
+                    "SELECT value FROM app_meta WHERE key = 'catalog_version'"
+                ).fetchone()[0]
+
+            self.assertNotIn("Negroni", names)
+            self.assertIn("Espresso Martini", names)
+            self.assertIn("Cola", names)
+            self.assertEqual(version, "2")
 
     def test_bulk_csv_import(self):
         self.login()
