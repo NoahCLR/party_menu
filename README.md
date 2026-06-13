@@ -59,6 +59,8 @@ SECRET_KEY=<output of: openssl rand -hex 32>
 
 The existing Cloudflared container and this stack must both be attached to the external Docker network `ncleroy-net`. The stack gives Nginx the stable network alias `party-menu-nginx`; the Flask app itself remains isolated on a private internal network.
 
+Both application images are built directly from the Git checkout. Nginx configuration is copied into its image during the build, so Portainer does not need to create a host file bind mount.
+
 The named volume `menu_data` keeps the menu database and uploaded photos across Git redeploys. No application port is published directly on the Docker host.
 
 ## Back up the menu
