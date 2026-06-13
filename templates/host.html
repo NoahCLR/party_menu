@@ -40,6 +40,7 @@
       </div>
 
       <div class="sidebar-actions">
+        <button class="button button-outline js-add-category" type="button">Manage categories</button>
         <button class="button button-outline js-add-item" type="button">+ Add item</button>
         <button class="button button-outline js-bulk-import" type="button">↑ Bulk import</button>
       </div>
@@ -53,6 +54,7 @@
           <p>{{ items|length }} item{% if items|length != 1 %}s{% endif %} in this view</p>
         </div>
         <div class="editor-actions">
+          <button class="button button-outline js-add-category" type="button">Manage categories</button>
           <button class="button button-dark js-add-item" type="button">+ Add item</button>
           <button class="button button-outline js-bulk-import" type="button">↑ Bulk import</button>
         </div>
@@ -144,7 +146,7 @@
       <div class="form-grid">
         <label>Name<input name="name" id="item-name" required maxlength="120"></label>
         <label>Category
-          <select name="category" id="item-category" required>
+          <select name="category" id="item-category" data-default-category="{{ selected_category if selected_category in categories else categories[0] }}" required>
             {% for category in categories %}<option value="{{ category }}">{{ category }}</option>{% endfor %}
           </select>
         </label>
@@ -162,11 +164,52 @@
     </form>
   </dialog>
 
+  <dialog id="category-dialog" class="editor-dialog category-dialog">
+    <div class="dialog-form">
+      <div class="dialog-heading">
+        <div><span class="section-number">03</span><h2>Categories</h2></div>
+        <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
+      </div>
+      <p class="dialog-intro">Add a category or change the order of sections on the public menu.</p>
+      <div class="category-manager" aria-label="Menu category order">
+        {% for category in category_rows %}
+          <div class="category-manager-row">
+            <strong>{{ category['name'] }}</strong>
+            <div class="order-controls">
+              <form method="post" action="{{ url_for('move_category', category_id=category['id'], direction='up') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="order-button" type="submit" aria-label="Move category {{ category['name'] }} up"{% if not category['can_move_up'] %} disabled{% endif %}>
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 12.5 10 6l6 6.5"/></svg>
+                </button>
+              </form>
+              <form method="post" action="{{ url_for('move_category', category_id=category['id'], direction='down') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="order-button" type="submit" aria-label="Move category {{ category['name'] }} down"{% if not category['can_move_down'] %} disabled{% endif %}>
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 7.5 6 6.5 6-6.5"/></svg>
+                </button>
+              </form>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+      <form method="post" action="{{ url_for('save_category') }}" class="category-create-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-grid category-form-grid">
+          <label>Category name<input name="name" id="category-name" required maxlength="80" autocomplete="off"></label>
+        </div>
+        <div class="dialog-actions">
+          <button class="button button-outline" type="button" data-close-dialog>Cancel</button>
+          <button class="button button-dark" type="submit">Add category</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
   <dialog id="bulk-dialog" class="editor-dialog bulk-dialog">
     <form method="post" action="{{ url_for('bulk_import') }}" enctype="multipart/form-data" class="dialog-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="dialog-heading">
-        <div><span class="section-number">03</span><h2>Bulk import</h2></div>
+        <div><span class="section-number">04</span><h2>Bulk import</h2></div>
         <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
       </div>
       <p class="dialog-intro">Upload a CSV with image URLs, or a ZIP containing <code>menu.csv</code> and an <code>images/</code> folder.</p>

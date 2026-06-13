@@ -14,7 +14,7 @@
   <nav class="category-nav" aria-label="Menu categories">
     <div class="page-shell category-nav-inner">
       {% for category in categories %}
-        <a href="#{{ category|lower|replace('&', 'and')|replace(',', '')|replace(' ', '-') }}">{{ category }}</a>
+        <a href="#category-{{ loop.index }}">{{ category }}</a>
       {% endfor %}
     </div>
   </nav>
@@ -22,7 +22,7 @@
   <main class="page-shell menu-content">
     {% for category in categories %}
       {% set category_items = grouped.get(category, []) %}
-      <section class="menu-section" id="{{ category|lower|replace('&', 'and')|replace(',', '')|replace(' ', '-') }}">
+      <section class="menu-section" id="category-{{ loop.index }}">
         <div class="section-heading">
           <span>{{ "%02d"|format(loop.index) }}</span>
           <h2>{{ category }}</h2>

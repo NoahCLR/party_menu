@@ -3,14 +3,16 @@ const items = new Map(
 );
 
 const itemDialog = document.querySelector("#item-dialog");
+const categoryDialog = document.querySelector("#category-dialog");
 const bulkDialog = document.querySelector("#bulk-dialog");
 
 function openItemDialog(item = null) {
+  const categorySelect = document.querySelector("#item-category");
   document.querySelector("#item-dialog-title").textContent = item ? "Edit item" : "Add item";
   document.querySelector("#item-id").value = item?.id || "";
   document.querySelector("#item-name").value = item?.name || "";
   document.querySelector("#item-description").value = item?.description || "";
-  document.querySelector("#item-category").value = item?.category || "Cocktails";
+  categorySelect.value = item?.category || categorySelect.dataset.defaultCategory || categorySelect.options[0]?.value || "";
   document.querySelector("#item-available").value = item ? String(item.available) : "1";
   document.querySelector("#existing-image").value = item?.image || "";
   document.querySelector("#image-url").value = item?.image?.startsWith("http") ? item.image : "";
@@ -21,6 +23,22 @@ function openItemDialog(item = null) {
 document.querySelectorAll(".js-add-item").forEach((button) => {
   button.addEventListener("click", () => openItemDialog());
 });
+
+function openCategoryDialog() {
+  categoryDialog.showModal();
+  categoryDialog.scrollTop = 0;
+  if (window.matchMedia("(min-width: 761px)").matches) {
+    document.querySelector("#category-name").focus({ preventScroll: true });
+  }
+}
+
+document.querySelectorAll(".js-add-category").forEach((button) => {
+  button.addEventListener("click", openCategoryDialog);
+});
+
+if (new URLSearchParams(window.location.search).get("manage_categories") === "1") {
+  openCategoryDialog();
+}
 
 document.querySelectorAll(".js-edit-item").forEach((button) => {
   button.addEventListener("click", () => openItemDialog(items.get(button.dataset.id)));

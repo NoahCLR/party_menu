@@ -34,7 +34,7 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR / "data"))
 UPLOAD_DIR = DATA_DIR / "uploads"
 DATABASE = DATA_DIR / "menu.db"
 
-CATEGORIES = (
+DEFAULT_CATEGORIES = (
     "Cocktails",
     "Booze, Beer & Wine",
     "Hard Drinks",
@@ -207,7 +207,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     upload_dir.mkdir(parents=True, exist_ok=True)
 
     app.teardown_appcontext(close_db)
-    app.jinja_env.globals.update(csrf_token=csrf_token, categories=CATEGORIES)
+    app.jinja_env.globals.update(csrf_token=csrf_token)
 
     with app.app_context():
         init_db()
@@ -250,9 +250,53 @@ def init_db() -> None:
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS menu_categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
         """
     )
     db.execute("BEGIN IMMEDIATE")
+    for sort_order, category in enumerate(DEFAULT_CATEGORIES, start=1):
+        db.execute(
+            """
+            INSERT INTO menu_categories (name, sort_order)
+            VALUES (?, ?)
+            ON CONFLICT(name) DO NOTHING
+            """,
+            (category, sort_order),
+        )
+    next_category_order = db.execute(
+        "SELECT COALESCE(MAX(sort_order), 0) FROM menu_categories"
+    ).fetchone()[0]
+    legacy_categories = db.execute(
+        """
+        SELECT DISTINCT menu_items.category
+        FROM menu_items
+        LEFT JOIN menu_categories
+            ON menu_categories.name = menu_items.category COLLATE NOCASE
+        WHERE menu_categories.id IS NULL AND TRIM(menu_items.category) != ''
+        ORDER BY menu_items.category COLLATE NOCASE
+        """
+    ).fetchall()
+    for row in legacy_categories:
+        next_category_order += 1
+        db.execute(
+            "INSERT INTO menu_categories (name, sort_order) VALUES (?, ?)",
+            (row["category"], next_category_order),
+        )
+    category_names = db.execute("SELECT name FROM menu_categories").fetchall()
+    for row in category_names:
+        db.execute(
+            """
+            UPDATE menu_items
+            SET category = ?
+            WHERE category = ? COLLATE NOCASE AND category != ?
+            """,
+            (row["name"], row["name"], row["name"]),
+        )
     count = db.execute("SELECT COUNT(*) FROM menu_items").fetchone()[0]
     catalog_version_row = db.execute(
         "SELECT value FROM app_meta WHERE key = 'catalog_version'"
@@ -325,11 +369,27 @@ def host_required(view):
     return wrapped
 
 
+def get_category_rows() -> list[sqlite3.Row]:
+    return get_db().execute(
+        "SELECT id, name, sort_order FROM menu_categories ORDER BY sort_order, id"
+    ).fetchall()
+
+
+def get_categories() -> list[str]:
+    return [row["name"] for row in get_category_rows()]
+
+
 def canonical_category(value: str) -> str | None:
-    cleaned = " ".join((value or "").strip().split()).casefold()
-    for category in CATEGORIES:
-        if cleaned == category.casefold():
-            return category
+    display_name = " ".join((value or "").strip().split())
+    if not display_name:
+        return None
+    existing = get_db().execute(
+        "SELECT name FROM menu_categories WHERE name = ? COLLATE NOCASE",
+        (display_name,),
+    ).fetchone()
+    if existing:
+        return existing["name"]
+    cleaned = display_name.casefold()
     aliases = {
         "booze": "Booze, Beer & Wine",
         "beer": "Booze, Beer & Wine",
@@ -344,7 +404,14 @@ def canonical_category(value: str) -> str | None:
         "snack": "Snacks",
         "cocktail": "Cocktails",
     }
-    return aliases.get(cleaned)
+    alias = aliases.get(cleaned)
+    if not alias:
+        return None
+    existing = get_db().execute(
+        "SELECT name FROM menu_categories WHERE name = ? COLLATE NOCASE",
+        (alias,),
+    ).fetchone()
+    return existing["name"] if existing else None
 
 
 def parse_available(value: str | None, default: bool = True) -> int:
@@ -396,11 +463,13 @@ def delete_uploaded_image(image: str) -> None:
 
 
 def category_order_sql() -> str:
-    clauses = " ".join(
-        f"WHEN '{category.replace(chr(39), chr(39) * 2)}' THEN {index}"
-        for index, category in enumerate(CATEGORIES, start=1)
-    )
-    return f"CASE category {clauses} ELSE {len(CATEGORIES) + 1} END"
+    return """
+        COALESCE(
+            (SELECT sort_order FROM menu_categories
+             WHERE name = menu_items.category COLLATE NOCASE),
+            2147483647
+        )
+    """
 
 
 def normalize_category_order(db: sqlite3.Connection, category: str) -> None:
@@ -410,6 +479,16 @@ def normalize_category_order(db: sqlite3.Connection, category: str) -> None:
     ).fetchall()
     db.executemany(
         "UPDATE menu_items SET sort_order = ? WHERE id = ?",
+        [(index, row["id"]) for index, row in enumerate(rows, start=1)],
+    )
+
+
+def normalize_category_positions(db: sqlite3.Connection) -> None:
+    rows = db.execute(
+        "SELECT id FROM menu_categories ORDER BY sort_order, id"
+    ).fetchall()
+    db.executemany(
+        "UPDATE menu_categories SET sort_order = ? WHERE id = ?",
         [(index, row["id"]) for index, row in enumerate(rows, start=1)],
     )
 
@@ -435,16 +514,18 @@ def register_routes(app: Flask) -> None:
 
     @app.get("/")
     def menu():
+        categories = get_categories()
         rows = get_db().execute(
             f"SELECT * FROM menu_items ORDER BY {category_order_sql()}, sort_order, id"
         ).fetchall()
-        grouped = {category: [] for category in CATEGORIES}
+        grouped = {category: [] for category in categories}
         for row in rows:
             grouped.setdefault(row["category"], []).append(row)
         available_count = sum(row["available"] for row in rows)
         return render_template(
             "menu.html",
             grouped=grouped,
+            categories=categories,
             available_count=available_count,
             total_count=len(rows),
         )
@@ -480,11 +561,16 @@ def register_routes(app: Flask) -> None:
     @app.get("/host")
     @host_required
     def host_editor():
+        category_rows = [dict(row) for row in get_category_rows()]
+        for index, category_row in enumerate(category_rows):
+            category_row["can_move_up"] = index > 0
+            category_row["can_move_down"] = index < len(category_rows) - 1
+        categories = [row["name"] for row in category_rows]
         selected_category = request.args.get("category", "All items")
         selected_status = request.args.get("status", "all")
         conditions = []
         values = []
-        if selected_category in CATEGORIES:
+        if selected_category in categories:
             conditions.append("category = ?")
             values.append(selected_category)
         if selected_status in {"available", "out"}:
@@ -501,12 +587,12 @@ def register_routes(app: Flask) -> None:
             "all": len(all_rows),
             "available": sum(row["available"] for row in all_rows),
             "out": sum(not row["available"] for row in all_rows),
-            **{category: sum(row["category"] == category for row in all_rows) for category in CATEGORIES},
+            **{category: sum(row["category"] == category for row in all_rows) for category in categories},
         }
         order_rows = db.execute(
             f"SELECT id, category FROM menu_items ORDER BY {category_order_sql()}, sort_order, id"
         ).fetchall()
-        category_ids = {category: [] for category in CATEGORIES}
+        category_ids = {category: [] for category in categories}
         for row in order_rows:
             category_ids.setdefault(row["category"], []).append(row["id"])
         positions = {
@@ -527,6 +613,8 @@ def register_routes(app: Flask) -> None:
             items=items_for_template,
             items_json=items_json,
             counts=counts,
+            categories=categories,
+            category_rows=category_rows,
             selected_category=selected_category,
             selected_status=selected_status,
         )
@@ -599,6 +687,81 @@ def register_routes(app: Flask) -> None:
             db.commit()
             flash(f"Added {name}.", "success")
         return redirect(url_for("host_editor"))
+
+    @app.post("/host/category/save")
+    @host_required
+    def save_category():
+        name = " ".join(request.form.get("name", "").strip().split())
+        if not name:
+            flash("Category name is required.", "error")
+            return redirect(url_for("host_editor"))
+        if len(name) > 80:
+            flash("Category names may not exceed 80 characters.", "error")
+            return redirect(url_for("host_editor"))
+        if name.casefold() == "all items":
+            flash("All items is reserved for the editor filter.", "error")
+            return redirect(url_for("host_editor"))
+
+        db = get_db()
+        existing = db.execute(
+            "SELECT name FROM menu_categories WHERE name = ? COLLATE NOCASE",
+            (name,),
+        ).fetchone()
+        if existing:
+            flash(f"Category {existing['name']} already exists.", "error")
+            return redirect(url_for("host_editor", category=existing["name"]))
+
+        next_order = db.execute(
+            "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM menu_categories"
+        ).fetchone()[0]
+        db.execute(
+            "INSERT INTO menu_categories (name, sort_order) VALUES (?, ?)",
+            (name, next_order),
+        )
+        db.commit()
+        flash(f"Added category {name}.", "success")
+        return redirect(url_for("host_editor", category=name))
+
+    @app.post("/host/category/<int:category_id>/move/<direction>")
+    @host_required
+    def move_category(category_id: int, direction: str):
+        if direction not in {"up", "down"}:
+            abort(404)
+        db = get_db()
+        category = db.execute(
+            "SELECT id, name FROM menu_categories WHERE id = ?",
+            (category_id,),
+        ).fetchone()
+        if category is None:
+            abort(404)
+
+        normalize_category_positions(db)
+        current = db.execute(
+            "SELECT sort_order FROM menu_categories WHERE id = ?",
+            (category_id,),
+        ).fetchone()[0]
+        neighbor_order = current - 1 if direction == "up" else current + 1
+        neighbor = db.execute(
+            "SELECT id FROM menu_categories WHERE sort_order = ?",
+            (neighbor_order,),
+        ).fetchone()
+        if neighbor is not None:
+            db.execute(
+                "UPDATE menu_categories SET sort_order = -1 WHERE id = ?",
+                (category_id,),
+            )
+            db.execute(
+                "UPDATE menu_categories SET sort_order = ? WHERE id = ?",
+                (current, neighbor["id"]),
+            )
+            db.execute(
+                "UPDATE menu_categories SET sort_order = ? WHERE id = ?",
+                (neighbor_order, category_id),
+            )
+            db.commit()
+            flash(f"Moved category {category['name']} {direction}.", "success")
+
+        return redirect(url_for("host_editor", manage_categories="1"))
 
     @app.post("/host/item/<int:item_id>/toggle")
     @host_required

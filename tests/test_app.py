@@ -125,6 +125,21 @@ class MenuAppTestCase(unittest.TestCase):
                     1,
                 ),
             )
+            database.execute(
+                """
+                INSERT INTO menu_items
+                    (name, description, category, image, available, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "Port",
+                    "Existing custom item",
+                    "After Dinner",
+                    "",
+                    1,
+                    2,
+                ),
+            )
             database.commit()
             database.close()
 
@@ -146,10 +161,16 @@ class MenuAppTestCase(unittest.TestCase):
                 version = db.execute(
                     "SELECT value FROM app_meta WHERE key = 'catalog_version'"
                 ).fetchone()[0]
+                categories = {
+                    row[0]
+                    for row in db.execute("SELECT name FROM menu_categories").fetchall()
+                }
 
             self.assertNotIn("Negroni", names)
             self.assertIn("Espresso Martini", names)
             self.assertIn("Cola", names)
+            self.assertIn("Port", names)
+            self.assertIn("After Dinner", categories)
             self.assertEqual(version, "3")
 
     def test_image_migration_fills_blanks_without_overwriting_custom_images(self):
@@ -221,6 +242,73 @@ class MenuAppTestCase(unittest.TestCase):
             public_response.data.index(b"Whiskey Sour"),
             public_response.data.index(b"Espresso Martini"),
         )
+
+    def test_host_can_add_assign_and_reorder_categories(self):
+        self.login()
+        token = self.token_from("/host")
+        response = self.client.post(
+            "/host/category/save",
+            data={"csrf_token": token, "name": "Desserts"},
+            follow_redirects=True,
+        )
+        self.assertIn(b"Added category Desserts", response.data)
+        self.assertIn(b'<option value="Desserts">Desserts</option>', response.data)
+        self.assertIn(b'data-default-category="Desserts"', response.data)
+
+        token = self.token_from("/host")
+        response = self.client.post(
+            "/host/item/save",
+            data={
+                "csrf_token": token,
+                "name": "Chocolate Mousse",
+                "description": "Dark chocolate and cream.",
+                "category": "Desserts",
+                "available": "1",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn(b"Added Chocolate Mousse", response.data)
+
+        with self.app.app_context():
+            from app import get_db
+
+            dessert_id = get_db().execute(
+                "SELECT id FROM menu_categories WHERE name = 'Desserts'"
+            ).fetchone()[0]
+
+        token = self.token_from("/host")
+        response = self.client.post(
+            f"/host/category/{dessert_id}/move/up",
+            data={"csrf_token": token},
+            follow_redirects=True,
+        )
+        self.assertIn(b"Moved category Desserts up", response.data)
+
+        public_response = self.client.get("/")
+        self.assertIn(b"Chocolate Mousse", public_response.data)
+        self.assertLess(
+            public_response.data.index(b'href="#category-5">Desserts</a>'),
+            public_response.data.index(b'href="#category-6">Snacks</a>'),
+        )
+
+    def test_category_names_are_unique_case_insensitively(self):
+        self.login()
+        token = self.token_from("/host")
+        response = self.client.post(
+            "/host/category/save",
+            data={"csrf_token": token, "name": "cocktails"},
+            follow_redirects=True,
+        )
+        self.assertIn(b"Category Cocktails already exists", response.data)
+
+        with self.app.app_context():
+            from app import get_db
+
+            count = get_db().execute(
+                "SELECT COUNT(*) FROM menu_categories WHERE name = ? COLLATE NOCASE",
+                ("cocktails",),
+            ).fetchone()[0]
+        self.assertEqual(count, 1)
 
     def test_bulk_csv_import(self):
         self.login()
