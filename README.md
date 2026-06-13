@@ -6,6 +6,7 @@ A mobile-first party menu with a password-protected host editor. Guests browse t
 
 - Public categories that the host can extend at any time
 - Clear `Out` state without removing an item
+- One-tap item ordering through Pushover notifications
 - Host login controlled by an environment password
 - Add, rename, and reorder public menu categories from the host editor
 - Reorder items within each category
@@ -24,6 +25,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 export ADMIN_PASSWORD='choose-a-password'
 export SECRET_KEY="$(openssl rand -hex 32)"
+export PUSHOVER_API_TOKEN='your-application-api-token'
+export PUSHOVER_USER_KEY='your-user-or-group-key'
 python app.py
 ```
 
@@ -55,10 +58,14 @@ Reference those files as `images/negroni.jpg` and `images/cheese-board.png` in t
 ```text
 ADMIN_PASSWORD=<a long host password>
 SECRET_KEY=<output of: openssl rand -hex 32>
+PUSHOVER_API_TOKEN=<your Pushover application API token>
+PUSHOVER_USER_KEY=<your Pushover user or group key>
 ```
 
 5. Deploy the stack.
 6. In the existing Cloudflare Zero Trust tunnel, set the public hostname service to `http://party-menu-nginx:80`.
+
+Create an application in Pushover to get `PUSHOVER_API_TOKEN`. Your account dashboard provides the separate `PUSHOVER_USER_KEY`; both values are required by the Pushover Messages API.
 
 The existing Cloudflared container and this stack must both be attached to the external Docker network `ncleroy-net`. The stack gives Nginx the stable network alias `party-menu-nginx`; the Flask app itself remains isolated on a private internal network.
 

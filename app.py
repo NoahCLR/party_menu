@@ -4,12 +4,17 @@ import csv
 import functools
 import hmac
 import io
+import json
 import os
 import secrets
 import sqlite3
+import time
 import uuid
 import zipfile
 from pathlib import Path, PurePosixPath
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from flask import (
     Flask,
@@ -44,6 +49,11 @@ DEFAULT_CATEGORIES = (
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 CATALOG_VERSION = "3"
+PUSHOVER_MESSAGES_URL = "https://api.pushover.net/1/messages.json"
+
+
+class PushoverError(RuntimeError):
+    pass
 
 SEED_ITEMS = (
     (
@@ -195,6 +205,10 @@ def create_app(test_config: dict | None = None) -> Flask:
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "false").casefold() == "true",
+        PUSHOVER_API_TOKEN=os.environ.get("PUSHOVER_API_TOKEN", ""),
+        PUSHOVER_USER_KEY=os.environ.get("PUSHOVER_USER_KEY", ""),
+        PUSHOVER_API_URL=os.environ.get("PUSHOVER_API_URL", PUSHOVER_MESSAGES_URL),
+        ORDER_COOLDOWN_SECONDS=5,
     )
     if test_config:
         app.config.update(test_config)
@@ -516,6 +530,37 @@ def normalize_category_positions(db: sqlite3.Connection) -> None:
     )
 
 
+def send_pushover_order(name: str, category: str) -> None:
+    token = current_app.config["PUSHOVER_API_TOKEN"]
+    user_key = current_app.config["PUSHOVER_USER_KEY"]
+    if not token or not user_key:
+        raise PushoverError("Pushover credentials are not configured.")
+
+    payload = urlencode(
+        {
+            "token": token,
+            "user": user_key,
+            "title": "New party order",
+            "message": f"{name}\nCategory: {category}",
+        }
+    ).encode("utf-8")
+    pushover_request = Request(
+        current_app.config["PUSHOVER_API_URL"],
+        data=payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+
+    try:
+        with urlopen(pushover_request, timeout=5) as response:
+            response_data = json.load(response)
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as error:
+        raise PushoverError("Pushover request failed.") from error
+
+    if response_data.get("status") != 1:
+        raise PushoverError("Pushover rejected the message.")
+
+
 def register_routes(app: Flask) -> None:
     @app.before_request
     def check_csrf():
@@ -557,6 +602,34 @@ def register_routes(app: Flask) -> None:
     def health():
         get_db().execute("SELECT 1").fetchone()
         return {"status": "ok"}
+
+    @app.post("/order/item/<int:item_id>")
+    def order_item(item_id: int):
+        item = get_db().execute(
+            "SELECT name, category, available FROM menu_items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        if item is None:
+            abort(404)
+        if not item["available"]:
+            flash(f"{item['name']} is currently out.", "error")
+            return redirect(url_for("menu"))
+
+        now = time.time()
+        last_order_at = session.get("last_order_at", 0)
+        if now - last_order_at < current_app.config["ORDER_COOLDOWN_SECONDS"]:
+            flash("Please wait a few seconds before ordering again.", "error")
+            return redirect(url_for("menu"))
+
+        try:
+            send_pushover_order(item["name"], item["category"])
+        except PushoverError as error:
+            current_app.logger.warning("Could not send order: %s", error)
+            flash("The order could not be sent. Please tell the host.", "error")
+        else:
+            session["last_order_at"] = now
+            flash(f"Order sent: {item['name']}.", "success")
+        return redirect(url_for("menu"))
 
     @app.get("/uploads/<path:filename>")
     def uploaded_file(filename: str):

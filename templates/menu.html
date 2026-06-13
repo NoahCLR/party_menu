@@ -19,6 +19,16 @@
     </div>
   </nav>
 
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="page-shell public-flashes" aria-live="polite">
+        {% for category, message in messages %}
+          <div class="public-flash {{ category }}" role="status">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
   <main class="page-shell menu-content">
     {% for category in categories %}
       {% set category_items = grouped.get(category, []) %}
@@ -43,6 +53,15 @@
                     {% if not item['available'] %}<span class="out-label">Out</span>{% endif %}
                   </div>
                   {% if item['description'] %}<p>{{ item['description'] }}</p>{% endif %}
+                  <form class="menu-order-form" method="post" action="{{ url_for('order_item', item_id=item['id']) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button
+                      class="menu-order-button"
+                      type="submit"
+                      aria-label="Order {{ item['name'] }}"
+                      {% if not item['available'] %}disabled{% endif %}
+                    >{% if item['available'] %}Order{% else %}Unavailable{% endif %}</button>
+                  </form>
                 </div>
               </article>
             {% endfor %}

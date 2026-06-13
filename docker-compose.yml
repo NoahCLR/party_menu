@@ -5,6 +5,8 @@ services:
     environment:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in Portainer}
       SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in Portainer}
+      PUSHOVER_API_TOKEN: ${PUSHOVER_API_TOKEN:?Set PUSHOVER_API_TOKEN in Portainer}
+      PUSHOVER_USER_KEY: ${PUSHOVER_USER_KEY:?Set PUSHOVER_USER_KEY in Portainer}
       DATA_DIR: /data
       COOKIE_SECURE: "true"
     volumes:

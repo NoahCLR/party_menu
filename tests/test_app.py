@@ -3,8 +3,10 @@ import re
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
+from urllib.parse import parse_qs
 
-from app import create_app
+from app import create_app, send_pushover_order
 
 
 TOKEN_PATTERN = re.compile(rb'name="csrf_token" value="([^"]+)"')
@@ -50,6 +52,8 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(b"Hard Drinks", response.data)
         self.assertIn(b"Soft Drinks", response.data)
         self.assertIn(b"25 items available", response.data)
+        self.assertEqual(response.data.count(b'class="menu-order-button"'), 25)
+        self.assertIn(b'aria-label="Order Espresso Martini"', response.data)
         image_paths = re.findall(rb'<img src="([^"]+)"', response.data)
         self.assertEqual(len(image_paths), 25)
         for image_path in image_paths:
@@ -57,6 +61,113 @@ class MenuAppTestCase(unittest.TestCase):
             self.assertEqual(image_response.status_code, 200)
             image_response.close()
         self.assertEqual(self.client.get("/health").json, {"status": "ok"})
+
+    def test_pushover_order_payload(self):
+        self.app.config.update(
+            PUSHOVER_API_TOKEN="application-token",
+            PUSHOVER_USER_KEY="user-key",
+        )
+        response = io.BytesIO(b'{"status": 1}')
+
+        with self.app.app_context(), patch("app.urlopen", return_value=response) as mocked:
+            send_pushover_order("Espresso Martini", "Cocktails")
+
+        pushover_request = mocked.call_args.args[0]
+        payload = parse_qs(pushover_request.data.decode())
+        self.assertEqual(payload["token"], ["application-token"])
+        self.assertEqual(payload["user"], ["user-key"])
+        self.assertEqual(payload["title"], ["New party order"])
+        self.assertEqual(payload["message"], ["Espresso Martini\nCategory: Cocktails"])
+        self.assertEqual(mocked.call_args.kwargs["timeout"], 5)
+
+    def test_guest_can_order_available_item(self):
+        with self.app.app_context():
+            from app import get_db
+
+            item_id = get_db().execute(
+                "SELECT id FROM menu_items WHERE name = 'Espresso Martini'"
+            ).fetchone()[0]
+
+        token = self.token_from("/")
+        with patch("app.send_pushover_order") as send_order:
+            response = self.client.post(
+                f"/order/item/{item_id}",
+                data={"csrf_token": token},
+                follow_redirects=True,
+            )
+
+        self.assertIn(b"Order sent: Espresso Martini.", response.data)
+        send_order.assert_called_once_with("Espresso Martini", "Cocktails")
+
+    def test_guest_cannot_order_unavailable_item(self):
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            item_id = db.execute(
+                "SELECT id FROM menu_items WHERE name = 'Espresso Martini'"
+            ).fetchone()[0]
+            db.execute("UPDATE menu_items SET available = 0 WHERE id = ?", (item_id,))
+            db.commit()
+
+        token = self.token_from("/")
+        with patch("app.send_pushover_order") as send_order:
+            response = self.client.post(
+                f"/order/item/{item_id}",
+                data={"csrf_token": token},
+                follow_redirects=True,
+            )
+
+        self.assertIn(b"Espresso Martini is currently out.", response.data)
+        self.assertIn(b"Unavailable", response.data)
+        send_order.assert_not_called()
+
+    def test_order_cooldown_prevents_accidental_double_tap(self):
+        with self.app.app_context():
+            from app import get_db
+
+            item_ids = [
+                row[0]
+                for row in get_db().execute(
+                    "SELECT id FROM menu_items WHERE name IN (?, ?) ORDER BY id",
+                    ("Espresso Martini", "Whiskey Sour"),
+                ).fetchall()
+            ]
+
+        token = self.token_from("/")
+        with patch("app.send_pushover_order") as send_order:
+            first_response = self.client.post(
+                f"/order/item/{item_ids[0]}",
+                data={"csrf_token": token},
+                follow_redirects=True,
+            )
+            second_response = self.client.post(
+                f"/order/item/{item_ids[1]}",
+                data={"csrf_token": token},
+                follow_redirects=True,
+            )
+
+        self.assertIn(b"Order sent:", first_response.data)
+        self.assertIn(b"Please wait a few seconds", second_response.data)
+        self.assertEqual(send_order.call_count, 1)
+
+    def test_order_failure_does_not_expose_provider_details(self):
+        with self.app.app_context():
+            from app import get_db
+
+            item_id = get_db().execute(
+                "SELECT id FROM menu_items WHERE name = 'Espresso Martini'"
+            ).fetchone()[0]
+
+        token = self.token_from("/")
+        response = self.client.post(
+            f"/order/item/{item_id}",
+            data={"csrf_token": token},
+            follow_redirects=True,
+        )
+
+        self.assertIn(b"The order could not be sent. Please tell the host.", response.data)
+        self.assertNotIn(b"Pushover credentials", response.data)
 
     def test_static_assets_are_cache_busted(self):
         self.login()

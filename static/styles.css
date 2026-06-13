@@ -143,6 +143,25 @@ img {
   padding-bottom: 40px;
 }
 
+.public-flashes {
+  padding-top: 22px;
+}
+
+.public-flash {
+  padding: 14px 16px;
+  color: var(--black);
+  background: var(--white);
+  border: 1px solid var(--white);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.public-flash.error {
+  color: var(--white);
+  background: var(--black);
+}
+
 .menu-section {
   scroll-margin-top: 80px;
   padding-top: 38px;
@@ -264,6 +283,37 @@ img {
   color: #dedede;
   font-size: clamp(1rem, 1.8vw, 1.25rem);
   line-height: 1.45;
+}
+
+.menu-order-form {
+  margin-top: 24px;
+}
+
+.menu-order-button {
+  min-width: 132px;
+  min-height: 46px;
+  padding: 11px 20px 9px;
+  color: var(--black);
+  background: var(--white);
+  border: 1px solid var(--white);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.menu-order-button:hover:not(:disabled),
+.menu-order-button:focus-visible:not(:disabled) {
+  color: var(--white);
+  background: var(--black);
+}
+
+.menu-order-button:disabled {
+  color: var(--gray-500);
+  background: transparent;
+  border-color: var(--gray-700);
+  cursor: not-allowed;
 }
 
 .out-label {
@@ -1051,6 +1101,18 @@ code {
     margin-top: 10px;
     font-size: 0.82rem;
     line-height: 1.4;
+  }
+
+  .menu-order-form {
+    margin-top: 15px;
+  }
+
+  .menu-order-button {
+    width: 100%;
+    min-width: 0;
+    min-height: 42px;
+    padding-inline: 8px;
+    font-size: 0.67rem;
   }
 
   .item-title-line {
