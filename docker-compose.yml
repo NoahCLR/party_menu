@@ -1,0 +1,46 @@
+services:
+  menu:
+    build: .
+    restart: unless-stopped
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in Portainer}
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in Portainer}
+      DATA_DIR: /data
+      COOKIE_SECURE: "true"
+    volumes:
+      - menu_data:/data
+    expose:
+      - "8000"
+    networks:
+      - party-menu-internal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  nginx:
+    image: nginx:stable-alpine
+    restart: unless-stopped
+    depends_on:
+      menu:
+        condition: service_healthy
+    expose:
+      - "80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      party-menu-internal:
+      ncleroy-net:
+        aliases:
+          - party-menu-nginx
+
+volumes:
+  menu_data:
+
+networks:
+  party-menu-internal:
+    internal: true
+  ncleroy-net:
+    external: true

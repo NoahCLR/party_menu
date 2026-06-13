@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block body_class %}public-page{% endblock %}
+
+{% block body %}
+  <header class="menu-header page-shell">
+    <div>
+      <h1>Tonight's Menu</h1>
+      <p class="availability"><span aria-hidden="true"></span>{{ available_count }} item{% if available_count != 1 %}s{% endif %} available</p>
+    </div>
+    <a class="host-link top-host-link" href="{{ url_for('host_login') }}">Host</a>
+  </header>
+
+  <nav class="category-nav" aria-label="Menu categories">
+    <div class="page-shell category-nav-inner">
+      {% for category in categories %}
+        <a href="#{{ category|lower|replace('&', 'and')|replace(',', '')|replace(' ', '-') }}">{{ category }}</a>
+      {% endfor %}
+    </div>
+  </nav>
+
+  <main class="page-shell menu-content">
+    {% for category in categories %}
+      {% set category_items = grouped.get(category, []) %}
+      <section class="menu-section" id="{{ category|lower|replace('&', 'and')|replace(',', '')|replace(' ', '-') }}">
+        <div class="section-heading">
+          <span>{{ "%02d"|format(loop.index) }}</span>
+          <h2>{{ category }}</h2>
+        </div>
+
+        {% if category_items %}
+          <div class="menu-list">
+            {% for item in category_items %}
+              <article class="menu-item{% if not item['available'] %} is-out{% endif %}">
+                <div class="item-image-wrap">
+                  {% if item['image'] %}
+                    <img src="{{ item['image'] }}" alt="{{ item['name'] }}" loading="lazy">
+                  {% else %}
+                    <div class="image-placeholder" aria-hidden="true">{{ item['name'][0] }}</div>
+                  {% endif %}
+                </div>
+                <div class="item-copy">
+                  <div class="item-title-line">
+                    <h3>{{ item['name'] }}</h3>
+                    {% if not item['available'] %}<span class="out-label">Out</span>{% endif %}
+                  </div>
+                  {% if item['description'] %}<p>{{ item['description'] }}</p>{% endif %}
+                </div>
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="empty-category">Nothing here yet.</p>
+        {% endif %}
+      </section>
+    {% endfor %}
+  </main>
+
+  <footer class="menu-footer page-shell">
+    <p>Made for tonight. Updated live by the host.</p>
+    <a class="host-link" href="{{ url_for('host_login') }}">Host login</a>
+  </footer>
+{% endblock %}
