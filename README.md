@@ -67,7 +67,7 @@ PUSHOVER_USER_KEY=<your Pushover user or group key>
 
 Create an application in Pushover to get `PUSHOVER_API_TOKEN`. Your account dashboard provides the separate `PUSHOVER_USER_KEY`; both values are required by the Pushover Messages API.
 
-The existing Cloudflared container and this stack must both be attached to the external Docker network `ncleroy-net`. The stack gives Nginx the stable network alias `party-menu-nginx`; the Flask app itself remains isolated on a private internal network.
+The existing Cloudflared container and this stack must both be attached to the external Docker network `ncleroy-net`. The stack gives Nginx the stable network alias `party-menu-nginx`. The Flask app receives traffic only through the private internal network and uses a separate bridge network for outbound Pushover API requests.
 
 Both application images are built directly from the Git checkout. Nginx configuration is copied into its image during the build, so Portainer does not need to create a host file bind mount.
 
