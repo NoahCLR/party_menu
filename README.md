@@ -7,8 +7,7 @@ A mobile-first party menu with a password-protected host editor. Guests browse t
 - Public categories that the host can extend at any time
 - Clear `Out` state without removing an item
 - Host login controlled by an environment password
-- Add new menu categories from the host editor
-- Reorder public menu categories from the host editor
+- Add, rename, and reorder public menu categories from the host editor
 - Reorder items within each category
 - Single-item image upload or external image URL
 - Generated photos for every built-in menu item

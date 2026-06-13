@@ -388,8 +388,22 @@ def get_categories() -> list[str]:
     return [row["name"] for row in get_category_rows()]
 
 
+def clean_category_name(value: str | None) -> str:
+    return " ".join((value or "").strip().split())
+
+
+def category_name_error(name: str) -> str | None:
+    if not name:
+        return "Category name is required."
+    if len(name) > 80:
+        return "Category names may not exceed 80 characters."
+    if name.casefold() == "all items":
+        return "All items is reserved for the editor filter."
+    return None
+
+
 def canonical_category(value: str) -> str | None:
-    display_name = " ".join((value or "").strip().split())
+    display_name = clean_category_name(value)
     if not display_name:
         return None
     existing = get_db().execute(
@@ -700,15 +714,10 @@ def register_routes(app: Flask) -> None:
     @app.post("/host/category/save")
     @host_required
     def save_category():
-        name = " ".join(request.form.get("name", "").strip().split())
-        if not name:
-            flash("Category name is required.", "error")
-            return redirect(url_for("host_editor"))
-        if len(name) > 80:
-            flash("Category names may not exceed 80 characters.", "error")
-            return redirect(url_for("host_editor"))
-        if name.casefold() == "all items":
-            flash("All items is reserved for the editor filter.", "error")
+        name = clean_category_name(request.form.get("name", ""))
+        error = category_name_error(name)
+        if error:
+            flash(error, "error")
             return redirect(url_for("host_editor"))
 
         db = get_db()
@@ -730,6 +739,51 @@ def register_routes(app: Flask) -> None:
         db.commit()
         flash(f"Added category {name}.", "success")
         return redirect(url_for("host_editor", category=name))
+
+    @app.post("/host/category/<int:category_id>/rename")
+    @host_required
+    def rename_category(category_id: int):
+        name = clean_category_name(request.form.get("name", ""))
+        error = category_name_error(name)
+        if error:
+            flash(error, "error")
+            return redirect(url_for("host_editor", manage_categories="1"))
+
+        db = get_db()
+        category = db.execute(
+            "SELECT id, name FROM menu_categories WHERE id = ?",
+            (category_id,),
+        ).fetchone()
+        if category is None:
+            abort(404)
+
+        existing = db.execute(
+            "SELECT name FROM menu_categories WHERE name = ? COLLATE NOCASE AND id != ?",
+            (name, category_id),
+        ).fetchone()
+        if existing:
+            flash(f"Category {existing['name']} already exists.", "error")
+            return redirect(url_for("host_editor", manage_categories="1"))
+
+        old_name = category["name"]
+        if name == old_name:
+            return redirect(url_for("host_editor", manage_categories="1"))
+
+        db.execute(
+            "UPDATE menu_categories SET name = ? WHERE id = ?",
+            (name, category_id),
+        )
+        db.execute(
+            """
+            UPDATE menu_items
+            SET category = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE category = ? COLLATE NOCASE
+            """,
+            (name, old_name),
+        )
+        db.commit()
+        flash(f"Renamed category {old_name} to {name}.", "success")
+        return redirect(url_for("host_editor", category=name, manage_categories="1"))
 
     @app.post("/host/category/<int:category_id>/move/<direction>")
     @host_required

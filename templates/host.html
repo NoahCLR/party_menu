@@ -174,7 +174,11 @@
       <div class="category-manager" aria-label="Menu category order">
         {% for category in category_rows %}
           <div class="category-manager-row">
-            <strong>{{ category['name'] }}</strong>
+            <form class="category-rename-form" method="post" action="{{ url_for('rename_category', category_id=category['id']) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input class="category-name-input" name="name" value="{{ category['name'] }}" aria-label="Category name for {{ category['name'] }}" required maxlength="80" autocomplete="off">
+              <button class="icon-button" type="submit" aria-label="Save category {{ category['name'] }}">Save</button>
+            </form>
             <div class="order-controls">
               <form method="post" action="{{ url_for('move_category', category_id=category['id'], direction='up') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

@@ -297,6 +297,50 @@ class MenuAppTestCase(unittest.TestCase):
             public_response.data.index(b'href="#category-6">Snacks</a>'),
         )
 
+    def test_host_can_rename_category_and_existing_items_follow(self):
+        self.login()
+        with self.app.app_context():
+            from app import get_db
+
+            snacks_id = get_db().execute(
+                "SELECT id FROM menu_categories WHERE name = 'Snacks'"
+            ).fetchone()[0]
+
+        token = self.token_from("/host")
+        response = self.client.post(
+            f"/host/category/{snacks_id}/rename",
+            data={"csrf_token": token, "name": "Bites"},
+            follow_redirects=True,
+        )
+        self.assertIn(b"Renamed category Snacks to Bites", response.data)
+        self.assertIn(b'<option value="Bites">Bites</option>', response.data)
+        self.assertIn(b'value="Bites"', response.data)
+
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            renamed_count = db.execute(
+                "SELECT COUNT(*) FROM menu_items WHERE category = 'Bites'"
+            ).fetchone()[0]
+            old_count = db.execute(
+                "SELECT COUNT(*) FROM menu_items WHERE category = 'Snacks'"
+            ).fetchone()[0]
+        self.assertEqual(renamed_count, 6)
+        self.assertEqual(old_count, 0)
+
+        public_response = self.client.get("/")
+        self.assertIn(b"Bites", public_response.data)
+        self.assertIn(b"Jonge Kaasblokjes", public_response.data)
+
+        token = self.token_from("/host")
+        response = self.client.post(
+            f"/host/category/{snacks_id}/rename",
+            data={"csrf_token": token, "name": "Cocktails"},
+            follow_redirects=True,
+        )
+        self.assertIn(b"Category Cocktails already exists", response.data)
+
     def test_category_names_are_unique_case_insensitively(self):
         self.login()
         token = self.token_from("/host")
