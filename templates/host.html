@@ -230,5 +230,5 @@
   </dialog>
 
   <script id="menu-data" type="application/json">{{ items_json|tojson }}</script>
-  <script src="{{ url_for('static', filename='js/host.js') }}" defer></script>
+  <script src="{{ static_asset('js/host.js') }}" defer></script>
 {% endblock %}

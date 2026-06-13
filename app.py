@@ -207,7 +207,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     upload_dir.mkdir(parents=True, exist_ok=True)
 
     app.teardown_appcontext(close_db)
-    app.jinja_env.globals.update(csrf_token=csrf_token)
+    app.jinja_env.globals.update(csrf_token=csrf_token, static_asset=static_asset)
 
     with app.app_context():
         init_db()
@@ -228,6 +228,15 @@ def close_db(_error=None) -> None:
     db = g.pop("db", None)
     if db is not None:
         db.close()
+
+
+def static_asset(filename: str) -> str:
+    path = BASE_DIR / "static" / filename
+    try:
+        version = path.stat().st_mtime_ns
+    except OSError:
+        version = CATALOG_VERSION
+    return url_for("static", filename=filename, v=version)
 
 
 def init_db() -> None:

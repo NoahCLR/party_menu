@@ -58,6 +58,12 @@ class MenuAppTestCase(unittest.TestCase):
             image_response.close()
         self.assertEqual(self.client.get("/health").json, {"status": "ok"})
 
+    def test_static_assets_are_cache_busted(self):
+        self.login()
+        response = self.client.get("/host")
+        self.assertRegex(response.text, r'/static/styles\.css\?v=\d+')
+        self.assertRegex(response.text, r'/static/js/host\.js\?v=\d+')
+
     def test_host_can_add_and_disable_item(self):
         self.login()
         token = self.token_from("/host")
