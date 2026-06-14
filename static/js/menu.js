@@ -3,6 +3,8 @@ const clearButton = document.querySelector("#menu-search-clear");
 const searchStatus = document.querySelector("#menu-search-status");
 const emptyState = document.querySelector("#menu-search-empty");
 const sections = Array.from(document.querySelectorAll("[data-menu-section]"));
+const menuTitles = Array.from(document.querySelectorAll(".item-copy h3"));
+const mobileMenu = window.matchMedia("(max-width: 760px)");
 
 const normalizeSearchText = (value) =>
   value
@@ -20,6 +22,43 @@ const searchableItems = sections.flatMap((section) =>
     ),
   })),
 );
+
+function fitMenuTitle(title) {
+  title.style.removeProperty("font-size");
+  title.classList.remove("is-forced-wrap");
+  if (
+    !mobileMenu.matches ||
+    !title.clientWidth ||
+    title.scrollWidth <= title.clientWidth
+  ) {
+    return;
+  }
+
+  const startingSize = Number.parseFloat(getComputedStyle(title).fontSize);
+  const scale = title.clientWidth / title.scrollWidth;
+  let fittedSize = Math.max(16, Math.floor(startingSize * scale * 10) / 10);
+  title.style.fontSize = `${fittedSize}px`;
+
+  while (title.scrollWidth > title.clientWidth && fittedSize > 16) {
+    fittedSize = Math.max(16, fittedSize - 0.5);
+    title.style.fontSize = `${fittedSize}px`;
+  }
+
+  title.classList.toggle("is-forced-wrap", title.scrollWidth > title.clientWidth);
+}
+
+function fitMenuTitles() {
+  menuTitles.forEach(fitMenuTitle);
+}
+
+let resizeFrame;
+window.addEventListener("resize", () => {
+  window.cancelAnimationFrame(resizeFrame);
+  resizeFrame = window.requestAnimationFrame(fitMenuTitles);
+});
+
+fitMenuTitles();
+document.fonts?.ready.then(fitMenuTitles);
 
 function filterMenu() {
   const rawQuery = searchInput.value.trim();
@@ -48,6 +87,7 @@ function filterMenu() {
   searchStatus.textContent = query
     ? `${resultCount} result${resultCount === 1 ? "" : "s"} for “${rawQuery}”`
     : `${searchableItems.length} menu item${searchableItems.length === 1 ? "" : "s"}`;
+  fitMenuTitles();
 }
 
 searchInput.addEventListener("input", filterMenu);

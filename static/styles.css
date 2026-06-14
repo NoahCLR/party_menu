@@ -350,6 +350,7 @@ img {
 
 .item-copy {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   justify-content: center;
   padding: clamp(26px, 5vw, 70px);
@@ -357,12 +358,14 @@ img {
 
 .item-title-line {
   display: flex;
+  min-width: 0;
   align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
 }
 
 .item-copy h3 {
+  max-width: 100%;
   margin: 0;
   font-family: var(--display);
   font-size: clamp(2rem, 4vw, 3.5rem);
@@ -370,6 +373,10 @@ img {
   letter-spacing: 0.005em;
   line-height: 0.95;
   text-transform: uppercase;
+}
+
+.item-copy h3.is-forced-wrap {
+  overflow-wrap: anywhere;
 }
 
 .item-copy p {
