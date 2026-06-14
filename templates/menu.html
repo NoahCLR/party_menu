@@ -68,6 +68,7 @@
                   <div class="menu-order-form">
                     {% if item['available'] %}
                       <a class="menu-order-button" href="{{ url_for('order_item', item_id=item['id']) }}" aria-label="Order {{ item['name'] }}">Order</a>
+                      <button class="menu-basket-button" type="button" data-basket-add="{{ item['id'] }}" aria-label="Add {{ item['name'] }} to basket">+ Basket</button>
                     {% else %}
                       <span class="menu-order-button is-disabled" aria-disabled="true">Unavailable</span>
                     {% endif %}
@@ -83,9 +84,15 @@
     {% endfor %}
   </main>
 
+  <aside id="basket-summary" class="basket-summary" aria-live="polite" hidden>
+    <span><strong id="basket-count">0</strong> <span id="basket-count-label">items</span> in basket</span>
+    <a href="{{ url_for('order_basket') }}">Review basket</a>
+  </aside>
+
   <footer class="menu-footer page-shell">
     <p>If you're missing anything, feel free to ask the host to flip you off.</p>
     <a class="host-link" href="{{ url_for('host_login') }}">Host login</a>
   </footer>
+  <script src="{{ static_asset('js/basket-store.js') }}" defer></script>
   <script src="{{ static_asset('js/menu.js') }}" defer></script>
 {% endblock %}

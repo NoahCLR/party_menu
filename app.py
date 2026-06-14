@@ -53,6 +53,10 @@ PUSHOVER_MESSAGES_URL = "https://api.pushover.net/1/messages.json"
 UNASSIGNED_CATEGORY = "Unassigned"
 GUEST_NAME_COOKIE = "party_guest_name"
 GUEST_NAME_COOKIE_MAX_AGE = 365 * 24 * 60 * 60
+MAX_BASKET_DISTINCT_ITEMS = 25
+MAX_BASKET_QUANTITY = 20
+MAX_BASKET_TOTAL_ITEMS = 50
+MAX_PUSHOVER_MESSAGE_LENGTH = 1024
 EXPORT_FORMAT_VERSION = 1
 MENU_EXPORT_COLUMNS = (
     "name",
@@ -564,9 +568,7 @@ def normalize_category_positions(db: sqlite3.Connection) -> None:
     )
 
 
-def send_pushover_order(
-    item_name: str, category: str, guest_name: str, note: str
-) -> None:
+def send_pushover_message(title: str, message: str) -> None:
     token = current_app.config["PUSHOVER_API_TOKEN"]
     user_key = current_app.config["PUSHOVER_USER_KEY"]
     if not token or not user_key:
@@ -576,11 +578,8 @@ def send_pushover_order(
         {
             "token": token,
             "user": user_key,
-            "title": f"Order from {guest_name}",
-            "message": (
-                f"Item: {item_name}\nCategory: {category}"
-                + (f"\nNote: {note}" if note else "")
-            ),
+            "title": title,
+            "message": message,
         }
     ).encode("utf-8")
     pushover_request = Request(
@@ -598,6 +597,76 @@ def send_pushover_order(
 
     if response_data.get("status") != 1:
         raise PushoverError("Pushover rejected the message.")
+
+
+def send_pushover_order(
+    item_name: str, category: str, guest_name: str, note: str
+) -> None:
+    message = f"Item: {item_name}\nCategory: {category}"
+    if note:
+        message += f"\nNote: {note}"
+    send_pushover_message(f"Order from {guest_name}", message)
+
+
+def format_basket_message(items: list[dict], note: str) -> str:
+    lines = ["Items:"]
+    lines.extend(f"{item['quantity']}x {item['name']}" for item in items)
+    if note:
+        lines.append(f"Note: {note}")
+    return "\n".join(lines)
+
+
+def send_pushover_basket_order(
+    items: list[dict], guest_name: str, note: str
+) -> None:
+    send_pushover_message(
+        f"Order from {guest_name}", format_basket_message(items, note)
+    )
+
+
+def parse_basket_items(value: str | None) -> list[tuple[int, int]]:
+    try:
+        payload = json.loads(value or "")
+    except json.JSONDecodeError as error:
+        raise ValueError(
+            "Your basket could not be read. Return to the menu and try again."
+        ) from error
+
+    if not isinstance(payload, list) or not payload:
+        raise ValueError("Your basket is empty.")
+    if len(payload) > MAX_BASKET_DISTINCT_ITEMS:
+        raise ValueError(
+            f"A basket may contain at most {MAX_BASKET_DISTINCT_ITEMS} different items."
+        )
+
+    parsed = []
+    seen_ids = set()
+    total_quantity = 0
+    for entry in payload:
+        if not isinstance(entry, dict):
+            raise ValueError("Your basket contains an invalid item.")
+        item_id = entry.get("id")
+        quantity = entry.get("quantity")
+        if (
+            isinstance(item_id, bool)
+            or not isinstance(item_id, int)
+            or item_id < 1
+            or isinstance(quantity, bool)
+            or not isinstance(quantity, int)
+            or not 1 <= quantity <= MAX_BASKET_QUANTITY
+        ):
+            raise ValueError("Your basket contains an invalid quantity.")
+        if item_id in seen_ids:
+            raise ValueError("Your basket contains a duplicate item.")
+        seen_ids.add(item_id)
+        total_quantity += quantity
+        parsed.append((item_id, quantity))
+
+    if total_quantity > MAX_BASKET_TOTAL_ITEMS:
+        raise ValueError(
+            f"A basket may contain at most {MAX_BASKET_TOTAL_ITEMS} items."
+        )
+    return parsed
 
 
 def register_routes(app: Flask) -> None:
@@ -646,6 +715,103 @@ def register_routes(app: Flask) -> None:
     def health():
         get_db().execute("SELECT 1").fetchone()
         return {"status": "ok"}
+
+    @app.route("/order/basket", methods=("GET", "POST"))
+    def order_basket():
+        catalog_rows = get_db().execute(
+            f"""
+            SELECT id, name, category
+            FROM menu_items
+            WHERE available = 1 AND category != ? COLLATE NOCASE
+            ORDER BY {category_order_sql()}, sort_order, id
+            """,
+            (UNASSIGNED_CATEGORY,),
+        ).fetchall()
+        catalog = [dict(row) for row in catalog_rows]
+        catalog_by_id = {item["id"]: item for item in catalog}
+        guest_name = clean_guest_name(request.cookies.get(GUEST_NAME_COOKIE))
+        note = ""
+
+        def render_basket(status: int = 200):
+            rendered = render_template(
+                "basket.html", catalog=catalog, guest_name=guest_name, note=note
+            )
+            return (rendered, status) if status != 200 else rendered
+
+        if request.method == "GET":
+            return render_basket()
+
+        submitted_guest_name = " ".join(
+            request.form.get("guest_name", "").strip().split()
+        )
+        guest_name = clean_guest_name(submitted_guest_name)
+        note = request.form.get("note", "").strip()
+
+        try:
+            submitted_items = parse_basket_items(request.form.get("basket_items"))
+        except ValueError as error:
+            flash(str(error), "error")
+            return render_basket(400)
+
+        if not guest_name:
+            flash("Enter your name before sending the order.", "error")
+            return render_basket(400)
+        if len(submitted_guest_name) > 80:
+            flash("Your name may not exceed 80 characters.", "error")
+            return render_basket(400)
+        if len(note) > 300:
+            flash("The note may not exceed 300 characters.", "error")
+            return render_basket(400)
+
+        items = []
+        for item_id, quantity in submitted_items:
+            item = catalog_by_id.get(item_id)
+            if item is None:
+                flash(
+                    "One or more basket items are no longer available. Review your basket.",
+                    "error",
+                )
+                return render_basket(400)
+            items.append({**item, "quantity": quantity})
+
+        message = format_basket_message(items, note)
+        if len(message.encode("utf-8")) > MAX_PUSHOVER_MESSAGE_LENGTH:
+            flash(
+                "This basket is too long to send. Remove a few items or shorten the note.",
+                "error",
+            )
+            return render_basket(400)
+
+        now = time.time()
+        last_order_at = session.get("last_order_at", 0)
+        if now - last_order_at < current_app.config["ORDER_COOLDOWN_SECONDS"]:
+            flash("Please wait a few seconds before ordering again.", "error")
+            return render_basket(429)
+
+        try:
+            send_pushover_basket_order(items, guest_name, note)
+        except PushoverError as error:
+            current_app.logger.warning("Could not send basket order: %s", error)
+            flash("The order could not be sent. Please tell the host.", "error")
+            return render_basket(502)
+
+        session["last_order_at"] = now
+        item_count = sum(item["quantity"] for item in items)
+        flash(
+            f"Basket order sent for {guest_name}: {item_count} "
+            f"item{'s' if item_count != 1 else ''}.",
+            "success",
+        )
+        response = redirect(url_for("menu", basket_sent=1))
+        response.set_cookie(
+            GUEST_NAME_COOKIE,
+            guest_name,
+            max_age=GUEST_NAME_COOKIE_MAX_AGE,
+            httponly=True,
+            secure=current_app.config["SESSION_COOKIE_SECURE"] or request.is_secure,
+            samesite="Lax",
+        )
+        return response
 
     @app.route("/order/item/<int:item_id>", methods=("GET", "POST"))
     def order_item(item_id: int):

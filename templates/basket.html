@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Your Basket · Tonight's Menu{% endblock %}
+{% block body_class %}public-page order-page basket-page{% endblock %}
+
+{% block body %}
+  <main class="order-shell basket-order-shell">
+    <a class="order-brand" href="{{ url_for('menu') }}">Tonight's Menu</a>
+    <section class="order-panel">
+      <p class="order-kicker">Combined order</p>
+      <h1>Your Basket</h1>
+      <p>Review quantities, then send everything as one order.</p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+          <div class="order-flash {{ category }}" role="alert">{{ message }}</div>
+        {% endfor %}
+      {% endwith %}
+
+      <form method="post" class="order-form basket-order-form" id="basket-order-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="basket_items" id="basket-items-input" value="">
+
+        <section class="basket-checkout" aria-labelledby="basket-items-heading">
+          <div class="basket-checkout-heading">
+            <h2 id="basket-items-heading">Items</h2>
+            <span id="basket-total"></span>
+          </div>
+          <div id="basket-items" class="basket-checkout-items"></div>
+          <p id="basket-empty" class="basket-empty" hidden>Your basket is empty. Add something from the menu first.</p>
+        </section>
+
+        <label for="guest_name">
+          Your name
+          <input id="guest_name" name="guest_name" value="{{ guest_name }}" maxlength="80" autocomplete="name" required>
+        </label>
+        <label for="note">
+          Note <span>Optional</span>
+          <textarea id="note" name="note" maxlength="300" rows="4" placeholder="One note for the whole order">{{ note }}</textarea>
+        </label>
+        <button class="order-submit" id="basket-submit" type="submit" disabled>Send basket order</button>
+      </form>
+      <a class="order-back" href="{{ url_for('menu') }}">Back to menu</a>
+    </section>
+  </main>
+
+  <script id="basket-catalog" type="application/json">{{ catalog|tojson }}</script>
+  <script src="{{ static_asset('js/basket-store.js') }}" defer></script>
+  <script src="{{ static_asset('js/basket.js') }}" defer></script>
+{% endblock %}

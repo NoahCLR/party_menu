@@ -5,6 +5,10 @@ const emptyState = document.querySelector("#menu-search-empty");
 const sections = Array.from(document.querySelectorAll("[data-menu-section]"));
 const menuTitles = Array.from(document.querySelectorAll(".item-copy h3"));
 const mobileMenu = window.matchMedia("(max-width: 760px)");
+const basketSummary = document.querySelector("#basket-summary");
+const basketCount = document.querySelector("#basket-count");
+const basketCountLabel = document.querySelector("#basket-count-label");
+const basketButtons = Array.from(document.querySelectorAll("[data-basket-add]"));
 
 const normalizeSearchText = (value) =>
   value
@@ -97,3 +101,38 @@ clearButton.addEventListener("click", () => {
   filterMenu();
   searchInput.focus();
 });
+
+function updateBasketSummary() {
+  const count = window.partyBasket.count();
+  basketCount.textContent = count;
+  basketCountLabel.textContent = count === 1 ? "item" : "items";
+  basketSummary.hidden = count === 0;
+}
+
+const menuParameters = new URLSearchParams(window.location.search);
+if (menuParameters.get("basket_sent") === "1") {
+  window.partyBasket.clear();
+  menuParameters.delete("basket_sent");
+  const cleanQuery = menuParameters.toString();
+  window.history.replaceState(
+    {},
+    "",
+    `${window.location.pathname}${cleanQuery ? `?${cleanQuery}` : ""}${window.location.hash}`,
+  );
+}
+
+basketButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    window.partyBasket.add(button.dataset.basketAdd);
+    const originalLabel = button.textContent;
+    button.textContent = "Added";
+    window.setTimeout(() => {
+      button.textContent = originalLabel;
+    }, 700);
+    updateBasketSummary();
+  });
+});
+
+window.addEventListener("party-basket-change", updateBasketSummary);
+window.addEventListener("storage", updateBasketSummary);
+updateBasketSummary();

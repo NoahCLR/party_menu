@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import re
 import sqlite3
 import tempfile
@@ -9,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import parse_qs
 
-from app import create_app, send_pushover_order
+from app import create_app, send_pushover_basket_order, send_pushover_order
 
 
 TOKEN_PATTERN = re.compile(rb'name="csrf_token" value="([^"]+)"')
@@ -56,11 +57,15 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(b"Soft Drinks", response.data)
         self.assertIn(b"25 items available", response.data)
         self.assertEqual(response.data.count(b'class="menu-order-button"'), 25)
+        self.assertEqual(response.data.count(b'data-basket-add="'), 25)
         self.assertIn(b'aria-label="Order Espresso Martini"', response.data)
+        self.assertIn(b'aria-label="Add Espresso Martini to basket"', response.data)
+        self.assertIn(b'id="basket-summary"', response.data)
         self.assertIn(b'id="menu-search-input"', response.data)
         self.assertIn(b"Search names and descriptions", response.data)
         self.assertIn(b'aria-label="Clear search"', response.data)
         self.assertRegex(response.data, rb'/static/js/menu\.js\?v=\d+')
+        self.assertRegex(response.data, rb'/static/js/basket-store\.js\?v=\d+')
         image_paths = re.findall(rb'<img src="([^"]+)"', response.data)
         self.assertEqual(len(image_paths), 25)
         for image_path in image_paths:
@@ -91,6 +96,30 @@ class MenuAppTestCase(unittest.TestCase):
             ["Item: Espresso Martini\nCategory: Cocktails\nNote: Less ice, please"],
         )
         self.assertEqual(mocked.call_args.kwargs["timeout"], 5)
+
+    def test_pushover_basket_order_payload(self):
+        self.app.config.update(
+            PUSHOVER_API_TOKEN="application-token",
+            PUSHOVER_USER_KEY="user-key",
+        )
+        response = io.BytesIO(b'{"status": 1}')
+
+        with self.app.app_context(), patch("app.urlopen", return_value=response) as mocked:
+            send_pushover_basket_order(
+                [
+                    {"name": "Moscow Mule", "quantity": 2},
+                    {"name": "Garlic Olives", "quantity": 1},
+                ],
+                "Noah",
+                "Bring together",
+            )
+
+        payload = parse_qs(mocked.call_args.args[0].data.decode())
+        self.assertEqual(payload["title"], ["Order from Noah"])
+        self.assertEqual(
+            payload["message"],
+            ["Items:\n2x Moscow Mule\n1x Garlic Olives\nNote: Bring together"],
+        )
 
     def test_guest_can_order_available_item(self):
         with self.app.app_context():
@@ -159,6 +188,10 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertNotIn(b"Less ice, please", next_order.data)
         self.assertRegex(next_order.data, rb'<textarea[^>]*>\s*</textarea>')
 
+        basket_order = self.client.get("/order/basket")
+        self.assertIn(b'value="Noah"', basket_order.data)
+        self.assertNotIn(b"Less ice, please", basket_order.data)
+
         second_token = self.token_from(
             f"/order/item/{item_ids['Whiskey Sour']}"
         )
@@ -181,6 +214,104 @@ class MenuAppTestCase(unittest.TestCase):
         )
         self.assertIn(b'value="Mila"', updated_order.data)
         self.assertNotIn(b'value="Noah"', updated_order.data)
+
+    def test_guest_can_send_a_combined_basket_order(self):
+        with self.app.app_context():
+            from app import get_db
+
+            item_ids = {
+                row["name"]: row["id"]
+                for row in get_db()
+                .execute(
+                    "SELECT id, name FROM menu_items WHERE name IN (?, ?)",
+                    ("Moscow Mule", "Garlic Olives"),
+                )
+                .fetchall()
+            }
+
+        token = self.token_from("/order/basket")
+        basket = [
+            {"id": item_ids["Moscow Mule"], "quantity": 2},
+            {"id": item_ids["Garlic Olives"], "quantity": 1},
+        ]
+        with patch("app.send_pushover_basket_order") as send_order:
+            response = self.client.post(
+                "/order/basket",
+                data={
+                    "csrf_token": token,
+                    "basket_items": json.dumps(basket),
+                    "guest_name": "Noah",
+                    "note": "Bring together",
+                },
+            )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.headers["Location"].endswith("/?basket_sent=1"))
+        self.assertIn("party_guest_name=Noah", response.headers.get("Set-Cookie", ""))
+        send_order.assert_called_once()
+        sent_items, guest_name, note = send_order.call_args.args
+        self.assertEqual(
+            [(item["name"], item["quantity"]) for item in sent_items],
+            [("Moscow Mule", 2), ("Garlic Olives", 1)],
+        )
+        self.assertEqual(guest_name, "Noah")
+        self.assertEqual(note, "Bring together")
+
+    def test_basket_checkout_rejects_an_item_that_is_no_longer_available(self):
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            item_id = db.execute(
+                "SELECT id FROM menu_items WHERE name = 'Moscow Mule'"
+            ).fetchone()[0]
+
+        token = self.token_from("/order/basket")
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            db.execute("UPDATE menu_items SET available = 0 WHERE id = ?", (item_id,))
+            db.commit()
+
+        with patch("app.send_pushover_basket_order") as send_order:
+            response = self.client.post(
+                "/order/basket",
+                data={
+                    "csrf_token": token,
+                    "basket_items": json.dumps([{"id": item_id, "quantity": 1}]),
+                    "guest_name": "Noah",
+                    "note": "",
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"no longer available", response.data)
+        send_order.assert_not_called()
+
+    def test_basket_checkout_rejects_invalid_quantities(self):
+        with self.app.app_context():
+            from app import get_db
+
+            item_id = get_db().execute(
+                "SELECT id FROM menu_items WHERE name = 'Moscow Mule'"
+            ).fetchone()[0]
+
+        token = self.token_from("/order/basket")
+        with patch("app.send_pushover_basket_order") as send_order:
+            response = self.client.post(
+                "/order/basket",
+                data={
+                    "csrf_token": token,
+                    "basket_items": json.dumps([{"id": item_id, "quantity": 21}]),
+                    "guest_name": "Noah",
+                    "note": "",
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"invalid quantity", response.data)
+        send_order.assert_not_called()
 
     def test_guest_name_is_required_before_sending(self):
         with self.app.app_context():
