@@ -1018,12 +1018,27 @@ img {
 }
 
 .dialog-close {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
   padding: 0;
-  background: none;
-  border: 0;
+  place-items: center;
+  -webkit-appearance: none;
+  appearance: none;
+  color: var(--black);
+  background: var(--white);
+  border: 1px solid var(--black);
+  border-radius: 0;
   font-size: 2.4rem;
-  line-height: 0.7;
+  line-height: 1;
   cursor: pointer;
+}
+
+.dialog-close:hover,
+.dialog-close:focus-visible {
+  color: var(--white);
+  background: var(--black);
 }
 
 .form-grid {
@@ -1703,16 +1718,54 @@ code {
   .category-manager-row {
     display: grid;
     align-items: stretch;
-    gap: 10px;
+    gap: 12px;
+    padding: 14px;
   }
 
   .category-rename-form {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+
+  .category-name-input {
+    min-height: 44px;
+  }
+
+  .category-rename-form .icon-button,
+  .category-delete-button {
+    min-height: 44px;
+    padding: 0 13px;
+    border: 1px solid var(--black);
+    font-weight: 700;
+    text-decoration: none;
   }
 
   .category-row-actions {
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .category-row-actions .order-controls {
+    display: flex;
+    gap: 6px;
+  }
+
+  .category-row-actions .order-button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .category-item-count {
+    justify-self: center;
+    font-size: 0.75rem;
+  }
+
+  .category-delete-button {
+    min-height: 40px;
+    justify-self: end;
   }
 
   .dialog-actions {
