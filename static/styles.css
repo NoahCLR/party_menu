@@ -102,6 +102,75 @@ img {
   letter-spacing: 0.12em;
 }
 
+.menu-search {
+  border-bottom: 1px solid var(--white);
+}
+
+.menu-search-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 24px;
+  align-items: end;
+  padding-block: 22px;
+}
+
+.menu-search-inner > label {
+  grid-column: 1 / -1;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.menu-search-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.menu-search-control input,
+.menu-search-control button {
+  min-height: 50px;
+  color: var(--white);
+  background: var(--black);
+  border: 1px solid var(--white);
+  border-radius: 0;
+}
+
+.menu-search-control input {
+  min-width: 0;
+  padding: 12px 15px;
+  border-right: 0;
+  font-size: 1rem;
+}
+
+.menu-search-control input::placeholder {
+  color: var(--gray-500);
+}
+
+.menu-search-control button {
+  padding: 10px 18px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.menu-search-control button:hover,
+.menu-search-control button:focus-visible {
+  color: var(--black);
+  background: var(--white);
+}
+
+.menu-search-inner > p {
+  margin: 0 0 16px;
+  color: var(--gray-300);
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+
 .category-nav {
   position: sticky;
   z-index: 20;
@@ -141,6 +210,22 @@ img {
 
 .menu-content {
   padding-bottom: 40px;
+}
+
+.menu-search-empty {
+  margin: 38px 0 0;
+  padding: 32px 0;
+  color: var(--gray-300);
+  border-block: 1px solid var(--gray-700);
+  font-size: 1rem;
+}
+
+.menu-item[hidden],
+.menu-section[hidden],
+.category-nav a[hidden],
+.menu-search-empty[hidden],
+.menu-search-control button[hidden] {
+  display: none;
 }
 
 .public-flashes {
@@ -1290,6 +1375,26 @@ code {
 }
 
 @media (max-width: 760px) {
+  .menu-search-inner {
+    grid-template-columns: 1fr;
+    gap: 9px;
+    padding-block: 18px;
+  }
+
+  .menu-search-inner > p {
+    margin: 2px 0 0;
+    font-size: 0.68rem;
+    white-space: normal;
+  }
+
+  .menu-search-control input {
+    font-size: 0.9rem;
+  }
+
+  .menu-search-control button {
+    padding-inline: 13px;
+  }
+
   :root {
     --page: min(100% - 28px, 680px);
   }

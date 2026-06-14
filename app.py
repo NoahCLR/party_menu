@@ -51,6 +51,8 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
 CATALOG_VERSION = "3"
 PUSHOVER_MESSAGES_URL = "https://api.pushover.net/1/messages.json"
 UNASSIGNED_CATEGORY = "Unassigned"
+GUEST_NAME_COOKIE = "party_guest_name"
+GUEST_NAME_COOKIE_MAX_AGE = 365 * 24 * 60 * 60
 EXPORT_FORMAT_VERSION = 1
 MENU_EXPORT_COLUMNS = (
     "name",
@@ -485,6 +487,10 @@ def parse_available(value: str | None, default: bool = True) -> int:
     return int(str(value).strip().casefold() not in {"0", "false", "no", "out", "sold out"})
 
 
+def clean_guest_name(value: str | None) -> str:
+    return " ".join((value or "").strip().split())[:80]
+
+
 def clean_image_reference(value: str | None) -> str:
     value = (value or "").strip()
     if value.startswith(("https://", "http://", "/uploads/", "/static/")):
@@ -656,16 +662,22 @@ def register_routes(app: Flask) -> None:
             return redirect(url_for("menu"))
 
         if request.method == "GET":
-            return render_template("order.html", item=item, guest_name="", note="")
+            guest_name = clean_guest_name(request.cookies.get(GUEST_NAME_COOKIE))
+            return render_template(
+                "order.html", item=item, guest_name=guest_name, note=""
+            )
 
-        guest_name = " ".join(request.form.get("guest_name", "").strip().split())
+        submitted_guest_name = " ".join(
+            request.form.get("guest_name", "").strip().split()
+        )
+        guest_name = clean_guest_name(submitted_guest_name)
         note = request.form.get("note", "").strip()
         if not guest_name:
             flash("Enter your name before sending the order.", "error")
             return render_template(
                 "order.html", item=item, guest_name=guest_name, note=note
             ), 400
-        if len(guest_name) > 80:
+        if len(submitted_guest_name) > 80:
             flash("Your name may not exceed 80 characters.", "error")
             return render_template(
                 "order.html", item=item, guest_name=guest_name, note=note
@@ -695,7 +707,16 @@ def register_routes(app: Flask) -> None:
         else:
             session["last_order_at"] = now
             flash(f"Order sent for {guest_name}: {item['name']}.", "success")
-        return redirect(url_for("menu"))
+        response = redirect(url_for("menu"))
+        response.set_cookie(
+            GUEST_NAME_COOKIE,
+            guest_name,
+            max_age=GUEST_NAME_COOKIE_MAX_AGE,
+            httponly=True,
+            secure=current_app.config["SESSION_COOKIE_SECURE"] or request.is_secure,
+            samesite="Lax",
+        )
+        return response
 
     @app.get("/uploads/<path:filename>")
     def uploaded_file(filename: str):

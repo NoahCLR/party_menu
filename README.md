@@ -5,8 +5,10 @@ A mobile-first party menu with a password-protected host editor. Guests browse t
 ## Features
 
 - Public categories that the host can extend at any time
+- Guest menu search across item names and descriptions
 - Clear `Out` state without removing an item
 - Simple item ordering with a required guest name, optional note, and Pushover notification
+- Guest names remembered for future order forms without saving order notes
 - Host login controlled by an environment password
 - Add, rename, reorder, and remove public menu categories while deleting, moving, or hiding their items
 - Hidden `Unassigned` holding area for items that should remain editable but disappear from the guest menu

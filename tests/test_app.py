@@ -57,6 +57,9 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(b"25 items available", response.data)
         self.assertEqual(response.data.count(b'class="menu-order-button"'), 25)
         self.assertIn(b'aria-label="Order Espresso Martini"', response.data)
+        self.assertIn(b'id="menu-search-input"', response.data)
+        self.assertIn(b"Search names and descriptions", response.data)
+        self.assertRegex(response.data, rb'/static/js/menu\.js\?v=\d+')
         image_paths = re.findall(rb'<img src="([^"]+)"', response.data)
         self.assertEqual(len(image_paths), 25)
         for image_path in image_paths:
@@ -115,6 +118,68 @@ class MenuAppTestCase(unittest.TestCase):
         send_order.assert_called_once_with(
             "Espresso Martini", "Cocktails", "Noah", "Less ice, please"
         )
+
+    def test_successful_order_remembers_only_the_latest_guest_name(self):
+        self.app.config["ORDER_COOLDOWN_SECONDS"] = 0
+        with self.app.app_context():
+            from app import get_db
+
+            item_ids = {
+                row["name"]: row["id"]
+                for row in get_db()
+                .execute(
+                    "SELECT id, name FROM menu_items WHERE name IN (?, ?)",
+                    ("Espresso Martini", "Whiskey Sour"),
+                )
+                .fetchall()
+            }
+
+        first_token = self.token_from(
+            f"/order/item/{item_ids['Espresso Martini']}"
+        )
+        with patch("app.send_pushover_order"):
+            first_response = self.client.post(
+                f"/order/item/{item_ids['Espresso Martini']}",
+                data={
+                    "csrf_token": first_token,
+                    "guest_name": "Noah",
+                    "note": "Less ice, please",
+                },
+            )
+
+        first_cookie = first_response.headers.get("Set-Cookie", "")
+        self.assertIn("party_guest_name=Noah", first_cookie)
+        self.assertIn("HttpOnly", first_cookie)
+        self.assertIn("SameSite=Lax", first_cookie)
+        self.assertNotIn("Less ice", first_cookie)
+
+        next_order = self.client.get(f"/order/item/{item_ids['Whiskey Sour']}")
+        self.assertIn(b'value="Noah"', next_order.data)
+        self.assertNotIn(b"Less ice, please", next_order.data)
+        self.assertRegex(next_order.data, rb'<textarea[^>]*>\s*</textarea>')
+
+        second_token = self.token_from(
+            f"/order/item/{item_ids['Whiskey Sour']}"
+        )
+        with patch("app.send_pushover_order"):
+            second_response = self.client.post(
+                f"/order/item/{item_ids['Whiskey Sour']}",
+                data={
+                    "csrf_token": second_token,
+                    "guest_name": "Mila",
+                    "note": "",
+                },
+            )
+
+        self.assertIn(
+            "party_guest_name=Mila",
+            second_response.headers.get("Set-Cookie", ""),
+        )
+        updated_order = self.client.get(
+            f"/order/item/{item_ids['Espresso Martini']}"
+        )
+        self.assertIn(b'value="Mila"', updated_order.data)
+        self.assertNotIn(b'value="Noah"', updated_order.data)
 
     def test_guest_name_is_required_before_sending(self):
         with self.app.app_context():
