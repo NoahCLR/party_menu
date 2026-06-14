@@ -303,8 +303,17 @@ img {
   border-bottom: 1px solid var(--white);
 }
 
+.menu-item:not(.no-image) {
+  height: clamp(280px, 30vw, 350px);
+  min-height: 0;
+}
+
 .menu-item:nth-child(even) .item-image-wrap {
   order: 2;
+}
+
+.menu-item:nth-child(even) {
+  grid-template-columns: 1fr minmax(240px, 46%);
 }
 
 .menu-item:nth-child(even) .item-copy {
@@ -330,13 +339,14 @@ img {
 
 .item-image-wrap {
   overflow: hidden;
+  height: 100%;
   background: #111;
 }
 
 .item-image-wrap img {
   width: 100%;
   height: 100%;
-  min-height: 230px;
+  min-height: 0;
   object-fit: cover;
   filter: saturate(0.86) contrast(1.04);
 }
@@ -354,7 +364,7 @@ img {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   padding: clamp(26px, 5vw, 70px);
 }
 
@@ -382,8 +392,12 @@ img {
 }
 
 .item-copy p {
+  display: -webkit-box;
+  overflow: hidden;
   max-width: 38ch;
   margin: 16px 0 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
   color: #dedede;
   font-size: clamp(1rem, 1.8vw, 1.25rem);
   line-height: 1.45;
@@ -392,7 +406,8 @@ img {
 .menu-order-form {
   display: flex;
   gap: 8px;
-  margin-top: 24px;
+  margin-top: auto;
+  padding-top: 24px;
 }
 
 .menu-order-button,
@@ -1345,6 +1360,102 @@ img {
   cursor: not-allowed;
 }
 
+.image-focus-editor {
+  margin: 2px 0 0;
+  padding: 18px;
+  border: 1px solid var(--black);
+}
+
+.image-focus-editor legend {
+  padding: 0 8px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.image-focus-editor > p {
+  margin: 0 0 14px;
+  color: var(--gray-700);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.image-focus-preview {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  width: min(100%, 520px);
+  aspect-ratio: 4 / 3;
+  padding: 0;
+  touch-action: none;
+  background: var(--black);
+  border: 1px solid var(--black);
+  cursor: crosshair;
+}
+
+.image-focus-preview[hidden],
+.image-focus-empty[hidden] {
+  display: none;
+}
+
+.image-focus-preview img {
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  object-fit: cover;
+}
+
+.image-focus-preview span {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--white);
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--black);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.image-focus-preview span::before,
+.image-focus-preview span::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  content: "";
+  background: var(--white);
+  transform: translate(-50%, -50%);
+}
+
+.image-focus-preview span::before {
+  width: 34px;
+  height: 1px;
+}
+
+.image-focus-preview span::after {
+  width: 1px;
+  height: 34px;
+}
+
+.image-focus-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.image-focus-actions > span {
+  color: var(--gray-700);
+  font-size: 0.72rem;
+}
+
+.image-focus-empty {
+  margin: 0 !important;
+  padding: 18px;
+  background: var(--gray-100);
+}
+
 .category-dialog {
   width: min(600px, calc(100vw - 28px));
 }
@@ -1758,13 +1869,21 @@ code {
     grid-template-columns: 43% 57%;
   }
 
+  .menu-item:nth-child(even) {
+    grid-template-columns: 57% 43%;
+  }
+
+  .menu-item:not(.no-image) {
+    height: clamp(250px, 55vw, 300px);
+  }
+
   .menu-item.no-image .item-copy {
     padding: 19px 0 21px;
   }
 
   .item-image-wrap img,
   .image-placeholder {
-    min-height: 160px;
+    min-height: 0;
   }
 
   .item-copy {
@@ -1777,6 +1896,7 @@ code {
 
   .item-copy p {
     margin-top: 10px;
+    -webkit-line-clamp: 3;
     font-size: 0.82rem;
     line-height: 1.4;
   }
@@ -1784,7 +1904,8 @@ code {
   .menu-order-form {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    margin-top: 15px;
+    margin-top: auto;
+    padding-top: 15px;
   }
 
   .menu-order-button,
@@ -2087,6 +2208,10 @@ code {
 @media (max-width: 420px) {
   .menu-item {
     grid-template-columns: 45% 55%;
+  }
+
+  .menu-item:nth-child(even) {
+    grid-template-columns: 55% 45%;
   }
 
   .item-copy {

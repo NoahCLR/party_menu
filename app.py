@@ -31,6 +31,7 @@ from flask import (
     session,
     url_for,
 )
+from PIL import Image, ImageOps, UnidentifiedImageError
 from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -49,6 +50,9 @@ DEFAULT_CATEGORIES = (
 )
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_IMAGE_DIMENSION = 1600
+MAX_IMAGE_PIXELS = 40_000_000
+WEBP_QUALITY = 84
 CATALOG_VERSION = "3"
 PUSHOVER_MESSAGES_URL = "https://api.pushover.net/1/messages.json"
 UNASSIGNED_CATEGORY = "Unassigned"
@@ -69,6 +73,8 @@ MENU_EXPORT_COLUMNS = (
     "available",
     "image_url",
     "image_filename",
+    "image_focus_x",
+    "image_focus_y",
     "category_order",
     "sort_order",
     "recipe",
@@ -290,6 +296,8 @@ def init_db() -> None:
             available INTEGER NOT NULL DEFAULT 1,
             sort_order INTEGER NOT NULL DEFAULT 0,
             recipe TEXT NOT NULL DEFAULT '[]',
+            image_focus_x REAL NOT NULL DEFAULT 50,
+            image_focus_y REAL NOT NULL DEFAULT 50,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
@@ -311,6 +319,14 @@ def init_db() -> None:
     if "recipe" not in menu_item_columns:
         db.execute(
             "ALTER TABLE menu_items ADD COLUMN recipe TEXT NOT NULL DEFAULT '[]'"
+        )
+    if "image_focus_x" not in menu_item_columns:
+        db.execute(
+            "ALTER TABLE menu_items ADD COLUMN image_focus_x REAL NOT NULL DEFAULT 50"
+        )
+    if "image_focus_y" not in menu_item_columns:
+        db.execute(
+            "ALTER TABLE menu_items ADD COLUMN image_focus_y REAL NOT NULL DEFAULT 50"
         )
     db.execute("BEGIN IMMEDIATE")
     categories_initialized = db.execute(
@@ -582,6 +598,14 @@ def recipe_json(recipe: list[dict[str, str]]) -> str:
     return json.dumps(recipe, ensure_ascii=True, separators=(",", ":"))
 
 
+def parse_focus(value: str | float | int | None, default: float = 50) -> float:
+    try:
+        focus = float(value)
+    except (TypeError, ValueError):
+        return default
+    return min(100, max(0, focus))
+
+
 def clean_image_reference(value: str | None) -> str:
     value = (value or "").strip()
     if value.startswith(("https://", "http://", "/uploads/", "/static/")):
@@ -596,10 +620,40 @@ def save_image_bytes(filename: str, payload: bytes) -> str:
         raise ValueError(f"Unsupported image type: {extension or 'unknown'}")
     if not payload or len(payload) > MAX_IMAGE_BYTES:
         raise ValueError("Each image must be between 1 byte and 10 MB.")
+
+    try:
+        Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+        with Image.open(io.BytesIO(payload)) as source:
+            if source.width * source.height > MAX_IMAGE_PIXELS:
+                raise ValueError("Image dimensions are too large.")
+            source.seek(0)
+            image = ImageOps.exif_transpose(source)
+            image.thumbnail(
+                (MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.Resampling.LANCZOS
+            )
+            if "A" in image.getbands():
+                image = image.convert("RGBA")
+            else:
+                image = image.convert("RGB")
+            encoded = io.BytesIO()
+            image.save(
+                encoded,
+                format="WEBP",
+                quality=WEBP_QUALITY,
+                method=6,
+            )
+    except (
+        Image.DecompressionBombError,
+        UnidentifiedImageError,
+        OSError,
+        ValueError,
+    ) as error:
+        raise ValueError("The uploaded file is not a valid supported image.") from error
+
     stem = secure_filename(Path(original).stem)[:60] or "menu-item"
-    stored_name = f"{stem}-{uuid.uuid4().hex[:10]}{extension}"
+    stored_name = f"{stem}-{uuid.uuid4().hex[:10]}.webp"
     destination = Path(current_app_upload_dir()) / stored_name
-    destination.write_bytes(payload)
+    destination.write_bytes(encoded.getvalue())
     return f"/uploads/{stored_name}"
 
 
@@ -1151,6 +1205,8 @@ def register_routes(app: Flask) -> None:
         available = int(request.form.get("available") == "1")
         image_url = clean_image_reference(request.form.get("image_url"))
         existing_image = clean_image_reference(request.form.get("existing_image"))
+        image_focus_x = parse_focus(request.form.get("image_focus_x"))
+        image_focus_y = parse_focus(request.form.get("image_focus_y"))
 
         if not name or not category:
             flash("Name and category are required.", "error")
@@ -1188,7 +1244,7 @@ def register_routes(app: Flask) -> None:
                 """
                 UPDATE menu_items
                 SET name = ?, description = ?, category = ?, image = ?, available = ?,
-                    sort_order = ?, recipe = ?,
+                    sort_order = ?, recipe = ?, image_focus_x = ?, image_focus_y = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
@@ -1200,6 +1256,8 @@ def register_routes(app: Flask) -> None:
                     available,
                     sort_order,
                     stored_recipe,
+                    image_focus_x,
+                    image_focus_y,
                     item_id,
                 ),
             )
@@ -1218,8 +1276,9 @@ def register_routes(app: Flask) -> None:
             db.execute(
                 """
                 INSERT INTO menu_items
-                    (name, description, category, image, available, sort_order, recipe)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (name, description, category, image, available, sort_order, recipe,
+                     image_focus_x, image_focus_y)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     name,
@@ -1229,6 +1288,8 @@ def register_routes(app: Flask) -> None:
                     available,
                     next_order,
                     stored_recipe,
+                    image_focus_x,
+                    image_focus_y,
                 ),
             )
             db.commit()
@@ -1554,6 +1615,8 @@ def register_routes(app: Flask) -> None:
                 "yes",
                 "",
                 "images/espresso-martini.jpg",
+                "50",
+                "40",
                 "1",
                 "1",
                 recipe_json(
@@ -1574,6 +1637,8 @@ def register_routes(app: Flask) -> None:
                 "yes",
                 "https://example.com/water.jpg",
                 "",
+                "50",
+                "50",
                 "2",
                 "1",
                 "[]",
@@ -1664,6 +1729,8 @@ def build_menu_export() -> io.BytesIO:
                 "available": "yes" if item["available"] else "no",
                 "image_url": image_url,
                 "image_filename": image_filename,
+                "image_focus_x": item["image_focus_x"],
+                "image_focus_y": item["image_focus_y"],
                 "category_order": category_orders.get(item["category"].casefold(), ""),
                 "sort_order": item["sort_order"],
                 "recipe": recipe_json(parse_recipe_json(item["recipe"])),
@@ -1797,6 +1864,8 @@ def append_bulk_items(
         except ValueError:
             skipped += 1
             continue
+        image_focus_x = parse_focus(row.get("image_focus_x"))
+        image_focus_y = parse_focus(row.get("image_focus_y"))
         image = clean_image_reference(row.get("image_url"))
         image_filename = row.get("image_filename", "").lstrip("./")
         if image_filename:
@@ -1807,8 +1876,9 @@ def append_bulk_items(
         db.execute(
             """
             INSERT INTO menu_items
-                (name, description, category, image, available, sort_order, recipe)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (name, description, category, image, available, sort_order, recipe,
+                 image_focus_x, image_focus_y)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -1818,6 +1888,8 @@ def append_bulk_items(
                 parse_available(row.get("available")),
                 next_order,
                 recipe,
+                image_focus_x,
+                image_focus_y,
             ),
         )
         imported += 1
@@ -1884,6 +1956,8 @@ def replace_menu_from_archive(
                 "available": parse_available(row.get("available")),
                 "sort_order": sort_order,
                 "recipe": recipe,
+                "image_focus_x": parse_focus(row.get("image_focus_x")),
+                "image_focus_y": parse_focus(row.get("image_focus_y")),
                 "image": image,
                 "image_match": image_match,
             }
@@ -1913,8 +1987,9 @@ def replace_menu_from_archive(
         db.executemany(
             """
             INSERT INTO menu_items
-                (name, description, category, image, available, sort_order, recipe)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (name, description, category, image, available, sort_order, recipe,
+                 image_focus_x, image_focus_y)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -1925,6 +2000,8 @@ def replace_menu_from_archive(
                     item["available"],
                     item["sort_order"],
                     item["recipe"],
+                    item["image_focus_x"],
+                    item["image_focus_y"],
                 )
                 for item in prepared_items
             ],

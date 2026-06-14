@@ -15,6 +15,8 @@ A mobile-first party menu with a password-protected host editor. Guests browse t
 - Hidden `Unassigned` holding area for items that should remain editable but disappear from the guest menu
 - Reorder items within each category
 - Single-item image upload or external image URL
+- Per-item image focal points with consistent responsive cropping
+- Automatic resize, orientation correction, and WebP conversion for local uploads
 - Generated photos for every built-in menu item
 - Bulk CSV import with image URLs
 - Full ZIP export and restore, including categories, item order, availability, and local photos
@@ -38,7 +40,7 @@ Open `http://localhost:8000`. The editor is at `http://localhost:8000/host`.
 
 ## Bulk import
 
-Download the CSV template from the editor. Required columns are `name` and `category`. Optional columns are `description`, `available`, `image_url`, `image_filename`, `category_order`, `sort_order`, and `recipe`. The `recipe` column contains a JSON list of ingredient objects with `name` and optional `ml` values; the template includes an example.
+Download the CSV template from the editor. Required columns are `name` and `category`. Optional columns are `description`, `available`, `image_url`, `image_filename`, `image_focus_x`, `image_focus_y`, `category_order`, `sort_order`, and `recipe`. Focus values range from `0` to `100`. The `recipe` column contains a JSON list of ingredient objects with `name` and optional `ml` values; the template includes an example.
 
 For many local photos, upload a ZIP like this:
 

@@ -10,6 +10,97 @@ const bulkDialog = document.querySelector("#bulk-dialog");
 const bulkImportForm = document.querySelector("#bulk-import-form");
 const recipeList = document.querySelector("#recipe-list");
 const addRecipeIngredientButton = document.querySelector("#add-recipe-ingredient");
+const imageFileInput = document.querySelector("#image-file");
+const imageUrlInput = document.querySelector("#image-url");
+const existingImageInput = document.querySelector("#existing-image");
+const imageFocusX = document.querySelector("#image-focus-x");
+const imageFocusY = document.querySelector("#image-focus-y");
+const imageFocusPreview = document.querySelector("#image-focus-preview");
+const imageFocusPreviewImage = document.querySelector("#image-focus-preview-image");
+const imageFocusMarker = document.querySelector("#image-focus-marker");
+const imageFocusValue = document.querySelector("#image-focus-value");
+const imageFocusEmpty = document.querySelector("#image-focus-empty");
+let previewObjectUrl = "";
+
+function clampFocus(value) {
+  return Math.min(100, Math.max(0, Number(value) || 0));
+}
+
+function setImageFocus(x, y) {
+  const focusX = Math.round(clampFocus(x) * 10) / 10;
+  const focusY = Math.round(clampFocus(y) * 10) / 10;
+  imageFocusX.value = focusX;
+  imageFocusY.value = focusY;
+  imageFocusPreviewImage.style.objectPosition = `${focusX}% ${focusY}%`;
+  imageFocusMarker.style.left = `${focusX}%`;
+  imageFocusMarker.style.top = `${focusY}%`;
+  imageFocusValue.textContent = `${focusX}% · ${focusY}%`;
+}
+
+function setImagePreview(source) {
+  imageFocusPreview.hidden = !source;
+  imageFocusEmpty.hidden = Boolean(source);
+  imageFocusPreviewImage.src = source || "";
+}
+
+function focusFromPointer(event) {
+  const bounds = imageFocusPreview.getBoundingClientRect();
+  setImageFocus(
+    ((event.clientX - bounds.left) / bounds.width) * 100,
+    ((event.clientY - bounds.top) / bounds.height) * 100,
+  );
+}
+
+function applyStoredImageFocus(image) {
+  image.style.objectPosition = `${clampFocus(image.dataset.focusX)}% ${clampFocus(image.dataset.focusY)}%`;
+}
+
+document.querySelectorAll("img[data-focus-x][data-focus-y]").forEach(applyStoredImageFocus);
+
+imageFileInput.addEventListener("change", () => {
+  if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+  previewObjectUrl = imageFileInput.files[0]
+    ? URL.createObjectURL(imageFileInput.files[0])
+    : "";
+  setImagePreview(
+    previewObjectUrl || imageUrlInput.value.trim() || existingImageInput.value,
+  );
+});
+
+imageUrlInput.addEventListener("change", () => {
+  if (!imageFileInput.files.length) {
+    setImagePreview(imageUrlInput.value.trim() || existingImageInput.value);
+  }
+});
+
+imageFocusPreview.addEventListener("pointerdown", (event) => {
+  imageFocusPreview.setPointerCapture(event.pointerId);
+  focusFromPointer(event);
+});
+
+imageFocusPreview.addEventListener("pointermove", (event) => {
+  if (imageFocusPreview.hasPointerCapture(event.pointerId)) focusFromPointer(event);
+});
+
+imageFocusPreview.addEventListener("keydown", (event) => {
+  const movement = {
+    ArrowLeft: [-2, 0],
+    ArrowRight: [2, 0],
+    ArrowUp: [0, -2],
+    ArrowDown: [0, 2],
+  }[event.key];
+  if (!movement) return;
+  event.preventDefault();
+  setImageFocus(
+    Number(imageFocusX.value) + movement[0],
+    Number(imageFocusY.value) + movement[1],
+  );
+});
+
+document.querySelector("#image-focus-center").addEventListener("click", () => {
+  setImageFocus(50, 50);
+  imageFocusPreview.focus();
+});
 
 function updateRecipeAddButton() {
   addRecipeIngredientButton.disabled = recipeList.children.length >= 20;
@@ -74,8 +165,13 @@ function openItemDialog(item = null) {
   document.querySelector("#item-description").value = item?.description || "";
   categorySelect.value = item?.category || categorySelect.dataset.defaultCategory || categorySelect.options[0]?.value || "";
   document.querySelector("#item-available").value = item ? String(item.available) : "1";
-  document.querySelector("#existing-image").value = item?.image || "";
-  document.querySelector("#image-url").value = item?.image?.startsWith("http") ? item.image : "";
+  existingImageInput.value = item?.image || "";
+  imageUrlInput.value = item?.image?.startsWith("http") ? item.image : "";
+  imageFileInput.value = "";
+  if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+  previewObjectUrl = "";
+  setImageFocus(item?.image_focus_x ?? 50, item?.image_focus_y ?? 50);
+  setImagePreview(item?.image || "");
   renderRecipe(item?.recipe || []);
   itemDialog.showModal();
   document.querySelector("#item-name").focus();

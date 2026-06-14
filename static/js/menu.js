@@ -9,6 +9,17 @@ const basketSummary = document.querySelector("#basket-summary");
 const basketCount = document.querySelector("#basket-count");
 const basketCountLabel = document.querySelector("#basket-count-label");
 const basketButtons = Array.from(document.querySelectorAll("[data-basket-add]"));
+const menuImages = Array.from(
+  document.querySelectorAll(".item-image-wrap img[data-focus-x][data-focus-y]"),
+);
+
+menuImages.forEach((image) => {
+  const parsedX = Number(image.dataset.focusX);
+  const parsedY = Number(image.dataset.focusY);
+  const focusX = Math.min(100, Math.max(0, Number.isFinite(parsedX) ? parsedX : 50));
+  const focusY = Math.min(100, Math.max(0, Number.isFinite(parsedY) ? parsedY : 50));
+  image.style.objectPosition = `${focusX}% ${focusY}%`;
+});
 
 const normalizeSearchText = (value) =>
   value

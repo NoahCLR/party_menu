@@ -56,7 +56,7 @@
               <article class="menu-item{% if not item['image'] %} no-image{% endif %}{% if not item['available'] %} is-out{% endif %}">
                 {% if item['image'] %}
                   <div class="item-image-wrap">
-                    <img src="{{ item['image'] }}" alt="{{ item['name'] }}" loading="lazy">
+                    <img src="{{ item['image'] }}" alt="{{ item['name'] }}" loading="lazy" data-focus-x="{{ item['image_focus_x'] }}" data-focus-y="{{ item['image_focus_y'] }}">
                   </div>
                 {% endif %}
                 <div class="item-copy">

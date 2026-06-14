@@ -10,6 +10,8 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import parse_qs
 
+from PIL import Image
+
 from app import create_app, send_pushover_basket_order, send_pushover_order
 
 
@@ -48,6 +50,11 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Menu editor", response.data)
 
+    def image_bytes(self, image_format="PNG", size=(320, 240), color=(20, 80, 160)):
+        payload = io.BytesIO()
+        Image.new("RGB", size, color).save(payload, format=image_format)
+        return payload.getvalue()
+
     def test_public_menu_and_health(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
@@ -66,6 +73,7 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(b'aria-label="Clear search"', response.data)
         self.assertRegex(response.data, rb'/static/js/menu\.js\?v=\d+')
         self.assertRegex(response.data, rb'/static/js/basket-store\.js\?v=\d+')
+        self.assertEqual(response.data.count(b'data-focus-x="50.0"'), 25)
         image_paths = re.findall(rb'<img src="([^"]+)"', response.data)
         self.assertEqual(len(image_paths), 25)
         for image_path in image_paths:
@@ -531,6 +539,9 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn("body textarea {\n    font-size: 16px;", stylesheet)
         self.assertIn(".category-row-actions .order-controls {\n    display: flex;", stylesheet)
         self.assertIn("grid-template-columns: auto minmax(0, 1fr) auto;", stylesheet)
+        self.assertIn(".menu-item:not(.no-image) {", stylesheet)
+        self.assertIn("height: clamp(250px, 55vw, 300px);", stylesheet)
+        self.assertIn(".image-focus-preview {", stylesheet)
 
     def test_host_can_add_and_disable_item(self):
         self.login()
@@ -583,6 +594,7 @@ class MenuAppTestCase(unittest.TestCase):
             follow_redirects=True,
         )
         self.assertIn(b"Added Test Cocktail", response.data)
+        self.assertIn(b'id="image-focus-preview"', response.data)
         self.assertIn(b'"name": "Rum"', response.data)
         self.assertIn(b'"ml": "22.5"', response.data)
 
@@ -631,6 +643,52 @@ class MenuAppTestCase(unittest.TestCase):
                 {"name": "Orange peel", "ml": ""},
             ],
         )
+
+    def test_uploaded_images_are_optimized_to_webp_with_a_focus_point(self):
+        self.login()
+        token = self.token_from("/host")
+        response = self.client.post(
+            "/host/item/save",
+            data={
+                "csrf_token": token,
+                "name": "Focused Cocktail",
+                "description": "Image optimization test.",
+                "category": "Cocktails",
+                "available": "1",
+                "image_focus_x": "18.5",
+                "image_focus_y": "77",
+                "image_file": (
+                    io.BytesIO(self.image_bytes(size=(2400, 1200))),
+                    "large-cocktail.png",
+                ),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        self.assertIn(b"Added Focused Cocktail", response.data)
+
+        with self.app.app_context():
+            from app import get_db
+
+            item = get_db().execute(
+                """
+                SELECT image, image_focus_x, image_focus_y
+                FROM menu_items WHERE name = 'Focused Cocktail'
+                """
+            ).fetchone()
+
+        self.assertTrue(item["image"].endswith(".webp"))
+        self.assertEqual(item["image_focus_x"], 18.5)
+        self.assertEqual(item["image_focus_y"], 77)
+        stored_path = Path(self.app.config["UPLOAD_DIR"]) / Path(item["image"]).name
+        with Image.open(stored_path) as optimized:
+            self.assertEqual(optimized.format, "WEBP")
+            self.assertLessEqual(max(optimized.size), 1600)
+            self.assertEqual(optimized.size, (1600, 800))
+
+        public_menu = self.client.get("/").data
+        self.assertIn(b'data-focus-x="18.5"', public_menu)
+        self.assertIn(b'data-focus-y="77.0"', public_menu)
 
     def test_existing_demo_database_is_migrated_once(self):
         with tempfile.TemporaryDirectory() as data_dir:
@@ -708,6 +766,12 @@ class MenuAppTestCase(unittest.TestCase):
                 port_recipe = db.execute(
                     "SELECT recipe FROM menu_items WHERE name = 'Port'"
                 ).fetchone()[0]
+                port_focus = db.execute(
+                    """
+                    SELECT image_focus_x, image_focus_y
+                    FROM menu_items WHERE name = 'Port'
+                    """
+                ).fetchone()
 
             self.assertNotIn("Negroni", names)
             self.assertIn("Espresso Martini", names)
@@ -715,6 +779,7 @@ class MenuAppTestCase(unittest.TestCase):
             self.assertIn("Port", names)
             self.assertIn("After Dinner", categories)
             self.assertEqual(port_recipe, "[]")
+            self.assertEqual(tuple(port_focus), (50, 50))
             self.assertEqual(version, "3")
 
     def test_image_migration_fills_blanks_without_overwriting_custom_images(self):
@@ -1125,6 +1190,8 @@ class MenuAppTestCase(unittest.TestCase):
                 "available",
                 "image_url",
                 "image_filename",
+                "image_focus_x",
+                "image_focus_y",
                 "recipe",
             ),
         )
@@ -1135,6 +1202,8 @@ class MenuAppTestCase(unittest.TestCase):
                 "description": "Butter and sea salt",
                 "category": "Snacks",
                 "available": "yes",
+                "image_focus_x": "25",
+                "image_focus_y": "75",
                 "recipe": json.dumps(
                     [
                         {"name": "Butter", "ml": "15"},
@@ -1168,21 +1237,28 @@ class MenuAppTestCase(unittest.TestCase):
         with self.app.app_context():
             from app import get_db
 
-            recipe = get_db().execute(
-                "SELECT recipe FROM menu_items WHERE name = 'Popcorn'"
-            ).fetchone()[0]
+            item = get_db().execute(
+                """
+                SELECT recipe, image_focus_x, image_focus_y
+                FROM menu_items WHERE name = 'Popcorn'
+                """
+            ).fetchone()
         self.assertEqual(
-            json.loads(recipe),
+            json.loads(item["recipe"]),
             [
                 {"name": "Butter", "ml": "15"},
                 {"name": "Sea salt", "ml": ""},
             ],
         )
+        self.assertEqual(item["image_focus_x"], 25)
+        self.assertEqual(item["image_focus_y"], 75)
 
     def test_host_can_export_and_restore_the_complete_menu(self):
         self.login()
         custom_image = Path(self.app.config["UPLOAD_DIR"]) / "rollback-photo.jpg"
-        custom_image.write_bytes(b"portable menu image")
+        custom_image.write_bytes(
+            self.image_bytes(image_format="JPEG", size=(640, 480), color=(90, 30, 10))
+        )
 
         with self.app.app_context():
             from app import get_db
@@ -1208,7 +1284,7 @@ class MenuAppTestCase(unittest.TestCase):
                 """
                 UPDATE menu_items
                 SET description = ?, available = 0, image = ?, sort_order = 1,
-                    recipe = ?
+                    recipe = ?, image_focus_x = 30, image_focus_y = 82
                 WHERE name = 'Whiskey Sour'
                 """,
                 (
@@ -1263,6 +1339,8 @@ class MenuAppTestCase(unittest.TestCase):
             fanta = next(row for row in menu_rows if row["name"] == "Fanta")
             self.assertEqual(whiskey["available"], "no")
             self.assertEqual(whiskey["sort_order"], "1")
+            self.assertEqual(whiskey["image_focus_x"], "30.0")
+            self.assertEqual(whiskey["image_focus_y"], "82.0")
             self.assertEqual(
                 json.loads(whiskey["recipe"]),
                 [
@@ -1322,7 +1400,8 @@ class MenuAppTestCase(unittest.TestCase):
             )
             whiskey = db.execute(
                 """
-                SELECT description, category, image, available, sort_order, recipe
+                SELECT description, category, image, available, sort_order, recipe,
+                       image_focus_x, image_focus_y
                 FROM menu_items WHERE name = 'Whiskey Sour'
                 """
             ).fetchone()
@@ -1330,6 +1409,8 @@ class MenuAppTestCase(unittest.TestCase):
             self.assertEqual(whiskey["category"], "Cocktails")
             self.assertEqual(whiskey["available"], 0)
             self.assertEqual(whiskey["sort_order"], 1)
+            self.assertEqual(whiskey["image_focus_x"], 30)
+            self.assertEqual(whiskey["image_focus_y"], 82)
             self.assertEqual(
                 json.loads(whiskey["recipe"]),
                 [
@@ -1342,7 +1423,10 @@ class MenuAppTestCase(unittest.TestCase):
             restored_image = Path(self.app.config["UPLOAD_DIR"]) / Path(
                 whiskey["image"]
             ).name
-            self.assertEqual(restored_image.read_bytes(), b"portable menu image")
+            self.assertEqual(restored_image.suffix, ".webp")
+            with Image.open(restored_image) as restored:
+                self.assertEqual(restored.format, "WEBP")
+                self.assertEqual(restored.size, (640, 480))
             self.assertEqual(
                 db.execute(
                     "SELECT category FROM menu_items WHERE name = 'Fanta'"

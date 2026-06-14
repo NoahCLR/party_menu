@@ -102,7 +102,7 @@
                   </div>
                 </td>
                 <td data-label="Image">
-                  {% if item['image'] %}<img class="table-thumb" src="{{ item['image'] }}" alt="">{% else %}<div class="table-thumb thumb-placeholder">{{ item['name'][0] }}</div>{% endif %}
+                  {% if item['image'] %}<img class="table-thumb" src="{{ item['image'] }}" alt="" data-focus-x="{{ item['image_focus_x'] }}" data-focus-y="{{ item['image_focus_y'] }}">{% else %}<div class="table-thumb thumb-placeholder">{{ item['name'][0] }}</div>{% endif %}
                 </td>
                 <td data-label="Item">
                   <strong>{{ item['name'] }}</strong>
@@ -142,6 +142,8 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="item_id" id="item-id">
       <input type="hidden" name="existing_image" id="existing-image">
+      <input type="hidden" name="image_focus_x" id="image-focus-x" value="50">
+      <input type="hidden" name="image_focus_y" id="image-focus-y" value="50">
       <div class="dialog-heading">
         <div><span class="section-number">02</span><h2 id="item-dialog-title">Add item</h2></div>
         <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
@@ -160,8 +162,21 @@
           <div id="recipe-list" class="recipe-list"></div>
           <button class="button button-outline recipe-add-button" id="add-recipe-ingredient" type="button">+ Add ingredient</button>
         </fieldset>
-        <label>Upload image<input name="image_file" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>
+        <label>Upload image<input name="image_file" id="image-file" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>
         <label>Image URL<input name="image_url" id="image-url" type="url" placeholder="https://..."></label>
+        <fieldset class="image-focus-editor full-field">
+          <legend>Image focus</legend>
+          <p>Tap or drag the point onto the most important part of the image. This controls the responsive crop.</p>
+          <button class="image-focus-preview" id="image-focus-preview" type="button" aria-label="Choose image focus point with a click, drag, or arrow keys" hidden>
+            <img id="image-focus-preview-image" alt="Crop preview">
+            <span id="image-focus-marker" aria-hidden="true"></span>
+          </button>
+          <div class="image-focus-actions">
+            <span id="image-focus-value">50% · 50%</span>
+            <button class="icon-button" id="image-focus-center" type="button">Reset to center</button>
+          </div>
+          <p class="image-focus-empty" id="image-focus-empty">Choose an upload or enter an image URL to set its focus.</p>
+        </fieldset>
         <label class="availability-field">Availability
           <select name="available" id="item-available"><option value="1">Available</option><option value="0">Out</option></select>
         </label>
@@ -283,7 +298,7 @@
       </label>
       <div class="bulk-help">
         <p>Required columns: <code>name</code>, <code>category</code>.</p>
-        <p>Optional: <code>description</code>, <code>available</code>, <code>image_url</code>, <code>image_filename</code>, <code>category_order</code>, <code>sort_order</code>, <code>recipe</code>.</p>
+        <p>Optional: <code>description</code>, <code>available</code>, <code>image_url</code>, <code>image_filename</code>, <code>image_focus_x</code>, <code>image_focus_y</code>, <code>category_order</code>, <code>sort_order</code>, <code>recipe</code>.</p>
         <p><code>recipe</code> contains JSON ingredient rows; the downloaded template includes an example.</p>
       </div>
       <fieldset class="import-mode">
