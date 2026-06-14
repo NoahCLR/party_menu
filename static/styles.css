@@ -1166,6 +1166,50 @@ code {
   margin: 5px 0;
 }
 
+.import-mode {
+  display: grid;
+  gap: 10px;
+  margin: 22px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.import-mode legend {
+  margin-bottom: 10px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.import-mode label {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 13px 14px;
+  border: 1px solid var(--black);
+  cursor: pointer;
+}
+
+.import-mode input {
+  margin-top: 3px;
+}
+
+.import-mode span {
+  display: grid;
+  gap: 4px;
+}
+
+.import-mode small {
+  color: var(--gray-700);
+  line-height: 1.35;
+}
+
+.import-mode-danger {
+  background: var(--gray-100);
+}
+
 /* Login */
 .login-page {
   display: grid;

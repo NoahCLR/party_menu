@@ -14,7 +14,7 @@ A mobile-first party menu with a password-protected host editor. Guests browse t
 - Single-item image upload or external image URL
 - Generated photos for every built-in menu item
 - Bulk CSV import with image URLs
-- Bulk ZIP import containing `menu.csv` plus local photos
+- Full ZIP export and restore, including categories, item order, availability, and local photos
 - SQLite database and uploaded images stored in a persistent Docker volume
 - Nginx reverse proxy connected to the existing external `ncleroy-net` network
 
@@ -35,7 +35,7 @@ Open `http://localhost:8000`. The editor is at `http://localhost:8000/host`.
 
 ## Bulk import
 
-Download the CSV template from the editor. Required columns are `name` and `category`. Optional columns are `description`, `available`, `image_url`, and `image_filename`.
+Download the CSV template from the editor. Required columns are `name` and `category`. Optional columns are `description`, `available`, `image_url`, `image_filename`, `category_order`, and `sort_order`.
 
 For many local photos, upload a ZIP like this:
 
@@ -48,6 +48,10 @@ party-menu.zip
 ```
 
 Reference those files as `images/negroni.jpg` and `images/cheese-board.png` in the CSV's `image_filename` column.
+
+Choose **Add to current menu** for normal bulk imports. Choose **Replace entire menu** to delete the current menu and restore the uploaded archive as the complete menu state.
+
+Use **Full export** in the host editor before large changes. The downloaded ZIP contains `menu.csv`, `categories.csv`, `manifest.json`, and all local item images. It can be uploaded unchanged with **Replace entire menu**, including empty categories and hidden `Unassigned` items.
 
 ## Deploy with Portainer
 
@@ -76,7 +80,7 @@ The named volume `menu_data` keeps the menu database and uploaded photos across 
 
 ## Back up the menu
 
-Back up the Docker volume `menu_data`. It contains both `/data/menu.db` and `/data/uploads/`.
+Use **Full export** in the host editor for a portable menu backup that can be restored through bulk import. Also back up the Docker volume `menu_data` for a complete infrastructure-level copy of `/data/menu.db` and `/data/uploads/`.
 
 ## Tests
 

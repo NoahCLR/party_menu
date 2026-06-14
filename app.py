@@ -51,6 +51,17 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
 CATALOG_VERSION = "3"
 PUSHOVER_MESSAGES_URL = "https://api.pushover.net/1/messages.json"
 UNASSIGNED_CATEGORY = "Unassigned"
+EXPORT_FORMAT_VERSION = 1
+MENU_EXPORT_COLUMNS = (
+    "name",
+    "description",
+    "category",
+    "available",
+    "image_url",
+    "image_filename",
+    "category_order",
+    "sort_order",
+)
 
 
 class PushoverError(RuntimeError):
@@ -1164,11 +1175,23 @@ def register_routes(app: Flask) -> None:
     def csv_template():
         content = io.StringIO()
         writer = csv.writer(content)
-        writer.writerow(("name", "description", "category", "available", "image_url", "image_filename"))
-        writer.writerow(("Espresso Martini", "Vodka, espresso, coffee liqueur.", "Cocktails", "yes", "", "images/espresso-martini.jpg"))
-        writer.writerow(("Sparkling Water", "Cold and fizzy.", "Booze, Beer & Wine", "yes", "https://example.com/water.jpg", ""))
+        writer.writerow(MENU_EXPORT_COLUMNS)
+        writer.writerow(("Espresso Martini", "Vodka, espresso, coffee liqueur.", "Cocktails", "yes", "", "images/espresso-martini.jpg", "1", "1"))
+        writer.writerow(("Sparkling Water", "Cold and fizzy.", "Booze, Beer & Wine", "yes", "https://example.com/water.jpg", "", "2", "1"))
         payload = io.BytesIO(content.getvalue().encode("utf-8"))
         return send_file(payload, mimetype="text/csv", as_attachment=True, download_name="menu-template.csv")
+
+    @app.get("/host/export.zip")
+    @host_required
+    def export_menu():
+        payload = build_menu_export()
+        filename = f"party-menu-export-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+        return send_file(
+            payload,
+            mimetype="application/zip",
+            as_attachment=True,
+            download_name=filename,
+        )
 
     @app.post("/host/bulk-import")
     @host_required
@@ -1177,30 +1200,153 @@ def register_routes(app: Flask) -> None:
         if not upload or not upload.filename:
             flash("Choose a CSV or ZIP file first.", "error")
             return redirect(url_for("host_editor"))
+        replace = request.form.get("import_mode") == "replace"
         try:
-            imported, skipped = import_bulk_file(upload.filename, upload.read())
+            imported, skipped = import_bulk_file(
+                upload.filename,
+                upload.read(),
+                replace=replace,
+            )
         except (ValueError, csv.Error, zipfile.BadZipFile, UnicodeDecodeError) as error:
             flash(f"Import failed: {error}", "error")
             return redirect(url_for("host_editor"))
-        flash(f"Imported {imported} item(s). Skipped {skipped} invalid row(s).", "success")
+        if replace:
+            flash(f"Restored the menu from the archive with {imported} item(s).", "success")
+        else:
+            flash(f"Imported {imported} item(s). Skipped {skipped} invalid row(s).", "success")
         return redirect(url_for("host_editor"))
 
 
-def import_bulk_file(filename: str, payload: bytes) -> tuple[int, int]:
+def build_menu_export() -> io.BytesIO:
+    db = get_db()
+    categories = db.execute(
+        "SELECT name, sort_order FROM menu_categories ORDER BY sort_order, id"
+    ).fetchall()
+    category_orders = {
+        row["name"].casefold(): row["sort_order"] for row in categories
+    }
+    items = db.execute(
+        f"SELECT * FROM menu_items ORDER BY {category_order_sql()}, sort_order, id"
+    ).fetchall()
+
+    menu_content = io.StringIO(newline="")
+    menu_writer = csv.DictWriter(menu_content, fieldnames=MENU_EXPORT_COLUMNS)
+    menu_writer.writeheader()
+    archived_images: dict[str, str] = {}
+    image_payloads: list[tuple[str, bytes]] = []
+
+    for item in items:
+        image_url = ""
+        image_filename = ""
+        image = item["image"]
+        if image.startswith(("https://", "http://")):
+            image_url = image
+        elif image:
+            source = None
+            if image.startswith("/uploads/"):
+                source = Path(current_app.config["UPLOAD_DIR"]) / Path(image).name
+            elif image.startswith("/static/"):
+                source = BASE_DIR / image.lstrip("/")
+            if source is not None and source.is_file():
+                image_filename = archived_images.get(image, "")
+                if not image_filename:
+                    safe_name = secure_filename(source.name) or f"item-{item['id']}.jpg"
+                    image_filename = f"images/{item['id']}-{safe_name}"
+                    archived_images[image] = image_filename
+                    image_payloads.append((image_filename, source.read_bytes()))
+
+        menu_writer.writerow(
+            {
+                "name": item["name"],
+                "description": item["description"],
+                "category": item["category"],
+                "available": "yes" if item["available"] else "no",
+                "image_url": image_url,
+                "image_filename": image_filename,
+                "category_order": category_orders.get(item["category"].casefold(), ""),
+                "sort_order": item["sort_order"],
+            }
+        )
+
+    category_content = io.StringIO(newline="")
+    category_writer = csv.writer(category_content)
+    category_writer.writerow(("name", "sort_order"))
+    for category in categories:
+        category_writer.writerow((category["name"], category["sort_order"]))
+
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("menu.csv", menu_content.getvalue().encode("utf-8"))
+        archive.writestr("categories.csv", category_content.getvalue().encode("utf-8"))
+        archive.writestr(
+            "manifest.json",
+            json.dumps(
+                {
+                    "format": "party-menu-export",
+                    "version": EXPORT_FORMAT_VERSION,
+                    "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                },
+                indent=2,
+            ).encode("utf-8"),
+        )
+        for filename, image_payload in image_payloads:
+            archive.writestr(filename, image_payload)
+    payload.seek(0)
+    return payload
+
+
+def import_bulk_file(
+    filename: str, payload: bytes, *, replace: bool = False
+) -> tuple[int, int]:
+    csv_payload, image_files, categories_payload = unpack_bulk_file(filename, payload)
+    if replace:
+        return replace_menu_from_archive(csv_payload, image_files, categories_payload)
+    return append_bulk_items(csv_payload, image_files)
+
+
+def unpack_bulk_file(
+    filename: str, payload: bytes
+) -> tuple[bytes, dict[str, tuple[str, bytes]], bytes | None]:
     extension = Path(secure_filename(filename)).suffix.lower()
     image_files: dict[str, tuple[str, bytes]] = {}
+    categories_payload = None
     if extension == ".csv":
         csv_payload = payload
     elif extension == ".zip":
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
             members = [member for member in archive.infolist() if not member.is_dir()]
-            csv_members = [member for member in members if PurePosixPath(member.filename).suffix.lower() == ".csv"]
-            if not csv_members:
+            if sum(member.file_size for member in members) > 200 * 1024 * 1024:
+                raise ValueError("The extracted ZIP may not exceed 200 MB.")
+            menu_members = [
+                member
+                for member in members
+                if PurePosixPath(member.filename).name.casefold() == "menu.csv"
+            ]
+            csv_members = [
+                member
+                for member in members
+                if PurePosixPath(member.filename).suffix.lower() == ".csv"
+                and PurePosixPath(member.filename).name.casefold() != "categories.csv"
+            ]
+            if not menu_members and not csv_members:
                 raise ValueError("The ZIP must contain a CSV file.")
-            preferred = next((member for member in csv_members if PurePosixPath(member.filename).name.casefold() == "menu.csv"), csv_members[0])
+            preferred = menu_members[0] if menu_members else csv_members[0]
             if preferred.file_size > 5 * 1024 * 1024:
                 raise ValueError("The CSV inside the ZIP may not exceed 5 MB.")
             csv_payload = archive.read(preferred)
+            categories_member = next(
+                (
+                    member
+                    for member in members
+                    if PurePosixPath(member.filename).name.casefold()
+                    == "categories.csv"
+                ),
+                None,
+            )
+            if categories_member is not None:
+                if categories_member.file_size > 1024 * 1024:
+                    raise ValueError("categories.csv may not exceed 1 MB.")
+                categories_payload = archive.read(categories_member)
             for member in members:
                 path = PurePosixPath(member.filename)
                 if path.suffix.lower() not in ALLOWED_IMAGE_EXTENSIONS or member.file_size > MAX_IMAGE_BYTES:
@@ -1211,18 +1357,34 @@ def import_bulk_file(filename: str, payload: bytes) -> tuple[int, int]:
                 image_files.setdefault(path.name.casefold(), (path.name, image_payload))
     else:
         raise ValueError("Only .csv and .zip files are supported.")
+    return csv_payload, image_files, categories_payload
 
+
+def read_menu_rows(csv_payload: bytes) -> list[dict[str, str]]:
     text_stream = io.StringIO(csv_payload.decode("utf-8-sig"))
     reader = csv.DictReader(text_stream)
-    if not reader.fieldnames or "name" not in {(field or "").strip().casefold() for field in reader.fieldnames}:
+    fields = {(field or "").strip().casefold() for field in reader.fieldnames or []}
+    if "name" not in fields:
         raise ValueError("The CSV must include a name column.")
+    return [
+        {
+            (key or "").strip().casefold(): (value or "").strip()
+            for key, value in raw_row.items()
+        }
+        for raw_row in reader
+    ]
+
+
+def append_bulk_items(
+    csv_payload: bytes, image_files: dict[str, tuple[str, bytes]]
+) -> tuple[int, int]:
+    rows = read_menu_rows(csv_payload)
 
     db = get_db()
     next_order = db.execute("SELECT COALESCE(MAX(sort_order), 0) FROM menu_items").fetchone()[0]
     imported = 0
     skipped = 0
-    for raw_row in reader:
-        row = {(key or "").strip().casefold(): (value or "").strip() for key, value in raw_row.items()}
+    for row in rows:
         name = " ".join(row.get("name", "").split())
         category = canonical_category(row.get("category", ""))
         if not name or not category:
@@ -1253,6 +1415,171 @@ def import_bulk_file(filename: str, payload: bytes) -> tuple[int, int]:
         imported += 1
     db.commit()
     return imported, skipped
+
+
+def replace_menu_from_archive(
+    csv_payload: bytes,
+    image_files: dict[str, tuple[str, bytes]],
+    categories_payload: bytes | None,
+) -> tuple[int, int]:
+    rows = read_menu_rows(csv_payload)
+    category_specs = read_export_categories(categories_payload, rows)
+    category_names = {name.casefold(): name for name, _sort_order in category_specs}
+    prepared_items = []
+    per_category_order: dict[str, int] = {}
+
+    for row_number, row in enumerate(rows, start=2):
+        name = " ".join(row.get("name", "").split())
+        raw_category = clean_category_name(row.get("category", ""))
+        if not name or not raw_category:
+            raise ValueError(f"Invalid item on menu.csv row {row_number}.")
+        if raw_category.casefold() == UNASSIGNED_CATEGORY.casefold():
+            category = UNASSIGNED_CATEGORY
+        else:
+            category = category_names.get(raw_category.casefold())
+            if category is None:
+                raise ValueError(
+                    f"Unknown category {raw_category} on menu.csv row {row_number}."
+                )
+
+        image = clean_image_reference(row.get("image_url"))
+        image_match = None
+        image_filename = row.get("image_filename", "").lstrip("./")
+        if image_filename:
+            image_match = image_files.get(image_filename.casefold()) or image_files.get(
+                PurePosixPath(image_filename).name.casefold()
+            )
+            if image_match is None:
+                raise ValueError(
+                    f"Missing image {image_filename} referenced on menu.csv row {row_number}."
+                )
+
+        category_key = category.casefold()
+        per_category_order[category_key] = per_category_order.get(category_key, 0) + 1
+        try:
+            sort_order = int(row.get("sort_order") or per_category_order[category_key])
+        except ValueError as error:
+            raise ValueError(
+                f"Invalid sort_order on menu.csv row {row_number}."
+            ) from error
+        prepared_items.append(
+            {
+                "name": name,
+                "description": row.get("description", ""),
+                "category": category,
+                "available": parse_available(row.get("available")),
+                "sort_order": sort_order,
+                "image": image,
+                "image_match": image_match,
+            }
+        )
+
+    db = get_db()
+    old_uploaded_images = [
+        row["image"]
+        for row in db.execute(
+            "SELECT DISTINCT image FROM menu_items WHERE image LIKE '/uploads/%'"
+        ).fetchall()
+    ]
+    saved_images = []
+    try:
+        for item in prepared_items:
+            if item["image_match"]:
+                item["image"] = save_image_bytes(*item["image_match"])
+                saved_images.append(item["image"])
+
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("DELETE FROM menu_items")
+        db.execute("DELETE FROM menu_categories")
+        db.executemany(
+            "INSERT INTO menu_categories (name, sort_order) VALUES (?, ?)",
+            category_specs,
+        )
+        db.executemany(
+            """
+            INSERT INTO menu_items
+                (name, description, category, image, available, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    item["name"],
+                    item["description"],
+                    item["category"],
+                    item["image"],
+                    item["available"],
+                    item["sort_order"],
+                )
+                for item in prepared_items
+            ],
+        )
+        db.execute(
+            """
+            INSERT INTO app_meta (key, value) VALUES ('categories_initialized', '1')
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        for image in saved_images:
+            (Path(current_app.config["UPLOAD_DIR"]) / Path(image).name).unlink(
+                missing_ok=True
+            )
+        raise
+
+    for image in old_uploaded_images:
+        delete_uploaded_image(image)
+    return len(prepared_items), 0
+
+
+def read_export_categories(
+    categories_payload: bytes | None, rows: list[dict[str, str]]
+) -> list[tuple[str, int]]:
+    raw_categories = []
+    if categories_payload is not None:
+        reader = csv.DictReader(
+            io.StringIO(categories_payload.decode("utf-8-sig"))
+        )
+        fields = {
+            (field or "").strip().casefold() for field in reader.fieldnames or []
+        }
+        if "name" not in fields:
+            raise ValueError("categories.csv must include a name column.")
+        for index, raw_row in enumerate(reader, start=1):
+            row = {
+                (key or "").strip().casefold(): (value or "").strip()
+                for key, value in raw_row.items()
+            }
+            raw_categories.append((row.get("name", ""), row.get("sort_order", ""), index))
+    else:
+        seen = set()
+        for index, row in enumerate(rows, start=1):
+            name = clean_category_name(row.get("category", ""))
+            if not name or name.casefold() == UNASSIGNED_CATEGORY.casefold():
+                continue
+            if name.casefold() in seen:
+                continue
+            seen.add(name.casefold())
+            raw_categories.append((name, row.get("category_order", ""), index))
+
+    categories = []
+    seen = set()
+    for raw_name, raw_order, fallback_order in raw_categories:
+        name = clean_category_name(raw_name)
+        error = category_name_error(name)
+        if error:
+            raise ValueError(error)
+        if name.casefold() in seen:
+            raise ValueError(f"Duplicate category {name} in the archive.")
+        seen.add(name.casefold())
+        try:
+            sort_order = int(raw_order or fallback_order)
+        except ValueError as error:
+            raise ValueError(f"Invalid sort order for category {name}.") from error
+        categories.append((name, sort_order))
+    categories.sort(key=lambda category: category[1])
+    return categories
 
 
 app = create_app()

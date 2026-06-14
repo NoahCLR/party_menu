@@ -7,6 +7,7 @@ const categoryDialog = document.querySelector("#category-dialog");
 const categoryRemoveDialog = document.querySelector("#category-remove-dialog");
 const categoryRemoveForm = document.querySelector("#category-remove-form");
 const bulkDialog = document.querySelector("#bulk-dialog");
+const bulkImportForm = document.querySelector("#bulk-import-form");
 
 function openItemDialog(item = null) {
   const categorySelect = document.querySelector("#item-category");
@@ -48,6 +49,13 @@ document.querySelectorAll(".js-edit-item").forEach((button) => {
 
 document.querySelectorAll(".js-bulk-import").forEach((button) => {
   button.addEventListener("click", () => bulkDialog.showModal());
+});
+
+bulkImportForm.addEventListener("submit", (event) => {
+  const replacesMenu = bulkImportForm.querySelector('input[name="import_mode"]:checked')?.value === "replace";
+  if (replacesMenu && !window.confirm("Replace the entire current menu with this import? This cannot be undone unless you have an export.")) {
+    event.preventDefault();
+  }
 });
 
 function updateCategoryRemovalFields() {

@@ -43,6 +43,7 @@
         <button class="button button-outline js-add-category" type="button">Manage categories</button>
         <button class="button button-outline js-add-item" type="button">+ Add item</button>
         <button class="button button-outline js-bulk-import" type="button">↑ Bulk import</button>
+        <a class="button button-outline" href="{{ url_for('export_menu') }}">↓ Full export</a>
       </div>
     </aside>
 
@@ -57,6 +58,7 @@
           <button class="button button-outline js-add-category" type="button">Manage categories</button>
           <button class="button button-dark js-add-item" type="button">+ Add item</button>
           <button class="button button-outline js-bulk-import" type="button">↑ Bulk import</button>
+          <a class="button button-outline" href="{{ url_for('export_menu') }}">↓ Full export</a>
         </div>
       </div>
 
@@ -260,13 +262,13 @@
   </dialog>
 
   <dialog id="bulk-dialog" class="editor-dialog bulk-dialog">
-    <form method="post" action="{{ url_for('bulk_import') }}" enctype="multipart/form-data" class="dialog-form">
+    <form id="bulk-import-form" method="post" action="{{ url_for('bulk_import') }}" enctype="multipart/form-data" class="dialog-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="dialog-heading">
         <div><span class="section-number">05</span><h2>Bulk import</h2></div>
         <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
       </div>
-      <p class="dialog-intro">Upload a CSV with image URLs, or a ZIP containing <code>menu.csv</code> and an <code>images/</code> folder.</p>
+      <p class="dialog-intro">Upload a CSV with image URLs, or a ZIP containing <code>menu.csv</code> and an <code>images/</code> folder. Full exports can be restored here.</p>
       <label class="drop-zone">
         <span>Drop a CSV or ZIP here</span>
         <small>or tap to browse · maximum 50 MB</small>
@@ -274,8 +276,19 @@
       </label>
       <div class="bulk-help">
         <p>Required columns: <code>name</code>, <code>category</code>.</p>
-        <p>Optional: <code>description</code>, <code>available</code>, <code>image_url</code>, <code>image_filename</code>.</p>
+        <p>Optional: <code>description</code>, <code>available</code>, <code>image_url</code>, <code>image_filename</code>, <code>category_order</code>, <code>sort_order</code>.</p>
       </div>
+      <fieldset class="import-mode">
+        <legend>Import behavior</legend>
+        <label>
+          <input type="radio" name="import_mode" value="append" checked>
+          <span><strong>Add to current menu</strong><small>Import valid rows without changing existing categories or items.</small></span>
+        </label>
+        <label class="import-mode-danger">
+          <input type="radio" name="import_mode" value="replace">
+          <span><strong>Replace entire menu</strong><small>Delete the current menu and restore categories, items, order, availability, and images from this file.</small></span>
+        </label>
+      </fieldset>
       <div class="dialog-actions">
         <a class="button button-outline" href="{{ url_for('csv_template') }}">Download CSV template</a>
         <button class="button button-dark" type="submit">Upload and import</button>

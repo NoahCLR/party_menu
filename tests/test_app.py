@@ -1,8 +1,11 @@
+import csv
 import io
 import re
 import sqlite3
 import tempfile
 import unittest
+import zipfile
+from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import parse_qs
 
@@ -739,6 +742,198 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(b"Imported 1 item", response.data)
         self.assertIn(b"Skipped 1 invalid row", response.data)
         self.assertIn(b"Popcorn", self.client.get("/").data)
+
+    def test_host_can_export_and_restore_the_complete_menu(self):
+        self.login()
+        custom_image = Path(self.app.config["UPLOAD_DIR"]) / "rollback-photo.jpg"
+        custom_image.write_bytes(b"portable menu image")
+
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            category_order = (
+                "Snacks",
+                "Cocktails",
+                "Booze, Beer & Wine",
+                "Hard Drinks",
+                "Soft Drinks",
+            )
+            for position, category in enumerate(category_order, start=1):
+                db.execute(
+                    "UPDATE menu_categories SET sort_order = ? WHERE name = ?",
+                    (position, category),
+                )
+            db.execute(
+                "INSERT INTO menu_categories (name, sort_order) VALUES (?, ?)",
+                ("Desserts", 6),
+            )
+            db.execute(
+                """
+                UPDATE menu_items
+                SET description = ?, available = 0, image = ?, sort_order = 1
+                WHERE name = 'Whiskey Sour'
+                """,
+                ("Rollback recipe", "/uploads/rollback-photo.jpg"),
+            )
+            db.execute(
+                "UPDATE menu_items SET sort_order = 2 WHERE name = 'Espresso Martini'"
+            )
+            db.execute(
+                "UPDATE menu_items SET category = ?, sort_order = 1 WHERE name = 'Fanta'",
+                ("Unassigned",),
+            )
+            db.execute(
+                "UPDATE menu_items SET image = ? WHERE name = 'Cola'",
+                ("https://example.com/cola.jpg",),
+            )
+            db.commit()
+
+        export_response = self.client.get("/host/export.zip")
+        self.assertEqual(export_response.status_code, 200)
+        self.assertIn(
+            "attachment; filename=party-menu-export-",
+            export_response.headers["Content-Disposition"],
+        )
+        export_payload = export_response.data
+
+        with zipfile.ZipFile(io.BytesIO(export_payload)) as archive:
+            archive_names = set(archive.namelist())
+            self.assertIn("menu.csv", archive_names)
+            self.assertIn("categories.csv", archive_names)
+            self.assertIn("manifest.json", archive_names)
+            categories = list(
+                csv.DictReader(io.StringIO(archive.read("categories.csv").decode()))
+            )
+            self.assertEqual(
+                [row["name"] for row in categories],
+                [*category_order, "Desserts"],
+            )
+            menu_rows = list(
+                csv.DictReader(io.StringIO(archive.read("menu.csv").decode()))
+            )
+            whiskey = next(row for row in menu_rows if row["name"] == "Whiskey Sour")
+            fanta = next(row for row in menu_rows if row["name"] == "Fanta")
+            self.assertEqual(whiskey["available"], "no")
+            self.assertEqual(whiskey["sort_order"], "1")
+            self.assertTrue(whiskey["image_filename"].startswith("images/"))
+            self.assertIn(whiskey["image_filename"], archive_names)
+            self.assertEqual(fanta["category"], "Unassigned")
+
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            db.execute("DELETE FROM menu_items")
+            db.execute("DELETE FROM menu_categories")
+            db.execute(
+                "INSERT INTO menu_categories (name, sort_order) VALUES ('Temporary', 1)"
+            )
+            db.execute(
+                """
+                INSERT INTO menu_items
+                    (name, description, category, image, available, sort_order)
+                VALUES ('Temporary item', '', 'Temporary', '', 1, 1)
+                """
+            )
+            db.commit()
+
+        token = self.token_from("/host")
+        restore_response = self.client.post(
+            "/host/bulk-import",
+            data={
+                "csrf_token": token,
+                "import_mode": "replace",
+                "bulk_file": (io.BytesIO(export_payload), "party-menu-export.zip"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        self.assertIn(b"Restored the menu from the archive with 25 item(s)", restore_response.data)
+
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            restored_categories = [
+                row["name"]
+                for row in db.execute(
+                    "SELECT name FROM menu_categories ORDER BY sort_order, id"
+                ).fetchall()
+            ]
+            self.assertEqual(restored_categories, [*category_order, "Desserts"])
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM menu_items").fetchone()[0], 25
+            )
+            whiskey = db.execute(
+                """
+                SELECT description, category, image, available, sort_order
+                FROM menu_items WHERE name = 'Whiskey Sour'
+                """
+            ).fetchone()
+            self.assertEqual(whiskey["description"], "Rollback recipe")
+            self.assertEqual(whiskey["category"], "Cocktails")
+            self.assertEqual(whiskey["available"], 0)
+            self.assertEqual(whiskey["sort_order"], 1)
+            self.assertTrue(whiskey["image"].startswith("/uploads/"))
+            restored_image = Path(self.app.config["UPLOAD_DIR"]) / Path(
+                whiskey["image"]
+            ).name
+            self.assertEqual(restored_image.read_bytes(), b"portable menu image")
+            self.assertEqual(
+                db.execute(
+                    "SELECT category FROM menu_items WHERE name = 'Fanta'"
+                ).fetchone()[0],
+                "Unassigned",
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT image FROM menu_items WHERE name = 'Cola'"
+                ).fetchone()[0],
+                "https://example.com/cola.jpg",
+            )
+
+        public_menu = self.client.get("/").data
+        self.assertNotIn(b"Fanta", public_menu)
+        self.assertNotIn(b"Temporary item", public_menu)
+
+    def test_invalid_replace_import_does_not_delete_the_current_menu(self):
+        self.login()
+        archive_payload = io.BytesIO()
+        with zipfile.ZipFile(archive_payload, "w") as archive:
+            archive.writestr(
+                "menu.csv",
+                "name,category,available\nInvalid item,Missing category,yes\n",
+            )
+            archive.writestr(
+                "categories.csv",
+                "name,sort_order\nCocktails,1\n",
+            )
+        archive_payload.seek(0)
+
+        token = self.token_from("/host")
+        response = self.client.post(
+            "/host/bulk-import",
+            data={
+                "csrf_token": token,
+                "import_mode": "replace",
+                "bulk_file": (archive_payload, "invalid-export.zip"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        self.assertIn(b"Import failed: Unknown category Missing category", response.data)
+
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM menu_items").fetchone()[0], 25
+            )
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM menu_categories").fetchone()[0], 5
+            )
 
     def test_post_without_csrf_is_rejected(self):
         response = self.client.post("/host/login", data={"password": "party-password"})
