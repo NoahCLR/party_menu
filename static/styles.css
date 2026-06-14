@@ -1014,6 +1014,25 @@ img {
   flex: 0 0 auto;
 }
 
+.category-row-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.category-item-count {
+  color: var(--gray-500);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.category-delete-button:disabled {
+  color: var(--gray-500);
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
 .dialog-actions {
   justify-content: flex-end;
   margin-top: 30px;
@@ -1440,6 +1459,7 @@ code {
   }
 
   .category-manager-row {
+    display: grid;
     align-items: stretch;
     gap: 10px;
   }
@@ -1447,6 +1467,10 @@ code {
   .category-rename-form {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .category-row-actions {
+    justify-content: space-between;
   }
 
   .dialog-actions {

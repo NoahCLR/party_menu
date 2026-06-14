@@ -50,7 +50,8 @@ document.querySelectorAll(".js-bulk-import").forEach((button) => {
 
 document.querySelectorAll(".js-delete-form").forEach((form) => {
   form.addEventListener("submit", (event) => {
-    if (!window.confirm(`Delete ${form.dataset.name}?`)) event.preventDefault();
+    const message = form.dataset.confirm || `Delete ${form.dataset.name}?`;
+    if (!window.confirm(message)) event.preventDefault();
   });
 });
 

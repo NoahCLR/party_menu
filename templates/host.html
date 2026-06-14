@@ -170,7 +170,7 @@
         <div><span class="section-number">03</span><h2>Categories</h2></div>
         <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
       </div>
-      <p class="dialog-intro">Add a category or change the order of sections on the public menu.</p>
+      <p class="dialog-intro">Add, rename, reorder, or remove categories. Removing a category also permanently deletes every item in it.</p>
       <div class="category-manager" aria-label="Menu category order">
         {% for category in category_rows %}
           <div class="category-manager-row">
@@ -179,18 +179,25 @@
               <input class="category-name-input" name="name" value="{{ category['name'] }}" aria-label="Category name for {{ category['name'] }}" required maxlength="80" autocomplete="off">
               <button class="icon-button" type="submit" aria-label="Save category {{ category['name'] }}">Save</button>
             </form>
-            <div class="order-controls">
-              <form method="post" action="{{ url_for('move_category', category_id=category['id'], direction='up') }}">
+            <div class="category-row-actions">
+              <div class="order-controls">
+                <form method="post" action="{{ url_for('move_category', category_id=category['id'], direction='up') }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="order-button" type="submit" aria-label="Move category {{ category['name'] }} up"{% if not category['can_move_up'] %} disabled{% endif %}>
+                    <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 12.5 10 6l6 6.5"/></svg>
+                  </button>
+                </form>
+                <form method="post" action="{{ url_for('move_category', category_id=category['id'], direction='down') }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="order-button" type="submit" aria-label="Move category {{ category['name'] }} down"{% if not category['can_move_down'] %} disabled{% endif %}>
+                    <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 7.5 6 6.5 6-6.5"/></svg>
+                  </button>
+                </form>
+              </div>
+              <span class="category-item-count">{{ category['item_count'] }} item{% if category['item_count'] != 1 %}s{% endif %}</span>
+              <form class="js-delete-form" method="post" action="{{ url_for('delete_category', category_id=category['id']) }}" data-name="category {{ category['name'] }}" data-confirm="Delete category {{ category['name'] }}{% if category['item_count'] %} and its {{ category['item_count'] }} item{% if category['item_count'] != 1 %}s{% endif %}{% endif %}?">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button class="order-button" type="submit" aria-label="Move category {{ category['name'] }} up"{% if not category['can_move_up'] %} disabled{% endif %}>
-                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 12.5 10 6l6 6.5"/></svg>
-                </button>
-              </form>
-              <form method="post" action="{{ url_for('move_category', category_id=category['id'], direction='down') }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button class="order-button" type="submit" aria-label="Move category {{ category['name'] }} down"{% if not category['can_move_down'] %} disabled{% endif %}>
-                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 7.5 6 6.5 6-6.5"/></svg>
-                </button>
+                <button class="icon-button category-delete-button" type="submit" aria-label="Delete category {{ category['name'] }}"{% if not category['can_delete'] %} disabled title="The menu must keep one category"{% endif %}>Delete</button>
               </form>
             </div>
           </div>

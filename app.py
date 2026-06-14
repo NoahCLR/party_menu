@@ -710,6 +710,11 @@ def register_routes(app: Flask) -> None:
         ).fetchall()
         db = get_db()
         all_rows = db.execute("SELECT id, category, available FROM menu_items").fetchall()
+        for category_row in category_rows:
+            category_row["item_count"] = sum(
+                row["category"] == category_row["name"] for row in all_rows
+            )
+            category_row["can_delete"] = len(category_rows) > 1
         counts = {
             "all": len(all_rows),
             "available": sum(row["available"] for row in all_rows),
@@ -888,6 +893,50 @@ def register_routes(app: Flask) -> None:
         db.commit()
         flash(f"Renamed category {old_name} to {name}.", "success")
         return redirect(url_for("host_editor", category=name, manage_categories="1"))
+
+    @app.post("/host/category/<int:category_id>/delete")
+    @host_required
+    def delete_category(category_id: int):
+        db = get_db()
+        category = db.execute(
+            "SELECT id, name FROM menu_categories WHERE id = ?",
+            (category_id,),
+        ).fetchone()
+        if category is None:
+            abort(404)
+
+        category_count = db.execute(
+            "SELECT COUNT(*) FROM menu_categories"
+        ).fetchone()[0]
+        if category_count <= 1:
+            flash("The menu must keep at least one category.", "error")
+            return redirect(url_for("host_editor", manage_categories="1"))
+
+        items = db.execute(
+            "SELECT image FROM menu_items WHERE category = ? COLLATE NOCASE",
+            (category["name"],),
+        ).fetchall()
+
+        db.execute(
+            "DELETE FROM menu_items WHERE category = ? COLLATE NOCASE",
+            (category["name"],),
+        )
+        db.execute("DELETE FROM menu_categories WHERE id = ?", (category_id,))
+        normalize_category_positions(db)
+        db.commit()
+        for item in items:
+            delete_uploaded_image(item["image"])
+
+        item_count = len(items)
+        if item_count:
+            noun = "item" if item_count == 1 else "items"
+            flash(
+                f"Deleted category {category['name']} and {item_count} {noun}.",
+                "success",
+            )
+        else:
+            flash(f"Deleted category {category['name']}.", "success")
+        return redirect(url_for("host_editor", manage_categories="1"))
 
     @app.post("/host/category/<int:category_id>/move/<direction>")
     @host_required

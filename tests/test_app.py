@@ -486,6 +486,76 @@ class MenuAppTestCase(unittest.TestCase):
         )
         self.assertIn(b"Category Cocktails already exists", response.data)
 
+    def test_host_can_delete_an_empty_category(self):
+        self.login()
+        token = self.token_from("/host")
+        self.client.post(
+            "/host/category/save",
+            data={"csrf_token": token, "name": "Desserts"},
+            follow_redirects=True,
+        )
+
+        with self.app.app_context():
+            from app import get_db
+
+            category_id = get_db().execute(
+                "SELECT id FROM menu_categories WHERE name = 'Desserts'"
+            ).fetchone()[0]
+
+        token = self.token_from("/host?manage_categories=1")
+        response = self.client.post(
+            f"/host/category/{category_id}/delete",
+            data={"csrf_token": token},
+            follow_redirects=True,
+        )
+
+        self.assertIn(b"Deleted category Desserts", response.data)
+        self.assertNotIn(b'value="Desserts"', response.data)
+        self.assertNotIn(b"Desserts", self.client.get("/").data)
+
+    def test_host_can_delete_a_category_and_its_items(self):
+        self.login()
+        with self.app.app_context():
+            from app import get_db
+
+            category_id = get_db().execute(
+                "SELECT id FROM menu_categories WHERE name = 'Snacks'"
+            ).fetchone()[0]
+
+        token = self.token_from("/host?manage_categories=1")
+        response = self.client.post(
+            f"/host/category/{category_id}/delete",
+            data={"csrf_token": token},
+            follow_redirects=True,
+        )
+
+        self.assertIn(b"Deleted category Snacks and 6 items", response.data)
+        self.assertNotIn(b'value="Snacks"', response.data)
+        self.assertNotIn(b"Jonge Kaasblokjes", self.client.get("/").data)
+
+    def test_host_cannot_delete_the_final_category(self):
+        self.login()
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            category = db.execute(
+                "SELECT id, name FROM menu_categories ORDER BY id LIMIT 1"
+            ).fetchone()
+            db.execute("DELETE FROM menu_items WHERE category != ?", (category["name"],))
+            db.execute("DELETE FROM menu_categories WHERE id != ?", (category["id"],))
+            db.commit()
+
+        token = self.token_from("/host?manage_categories=1")
+        response = self.client.post(
+            f"/host/category/{category['id']}/delete",
+            data={"csrf_token": token},
+            follow_redirects=True,
+        )
+
+        self.assertIn(b"The menu must keep at least one category", response.data)
+        self.assertIn(category["name"].encode(), response.data)
+
     def test_category_names_are_unique_case_insensitively(self):
         self.login()
         token = self.token_from("/host")
