@@ -50,6 +50,7 @@ ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 CATALOG_VERSION = "3"
 PUSHOVER_MESSAGES_URL = "https://api.pushover.net/1/messages.json"
+UNASSIGNED_CATEGORY = "Unassigned"
 
 
 class PushoverError(RuntimeError):
@@ -282,14 +283,23 @@ def init_db() -> None:
         """
     )
     db.execute("BEGIN IMMEDIATE")
-    for sort_order, category in enumerate(DEFAULT_CATEGORIES, start=1):
+    categories_initialized = db.execute(
+        "SELECT value FROM app_meta WHERE key = 'categories_initialized'"
+    ).fetchone()
+    if categories_initialized is None:
+        category_count = db.execute(
+            "SELECT COUNT(*) FROM menu_categories"
+        ).fetchone()[0]
+        if category_count == 0:
+            db.executemany(
+                "INSERT INTO menu_categories (name, sort_order) VALUES (?, ?)",
+                [
+                    (category, sort_order)
+                    for sort_order, category in enumerate(DEFAULT_CATEGORIES, start=1)
+                ],
+            )
         db.execute(
-            """
-            INSERT INTO menu_categories (name, sort_order)
-            VALUES (?, ?)
-            ON CONFLICT(name) DO NOTHING
-            """,
-            (category, sort_order),
+            "INSERT INTO app_meta (key, value) VALUES ('categories_initialized', '1')"
         )
     next_category_order = db.execute(
         "SELECT COALESCE(MAX(sort_order), 0) FROM menu_categories"
@@ -300,9 +310,12 @@ def init_db() -> None:
         FROM menu_items
         LEFT JOIN menu_categories
             ON menu_categories.name = menu_items.category COLLATE NOCASE
-        WHERE menu_categories.id IS NULL AND TRIM(menu_items.category) != ''
+        WHERE menu_categories.id IS NULL
+            AND TRIM(menu_items.category) != ''
+            AND menu_items.category != ? COLLATE NOCASE
         ORDER BY menu_items.category COLLATE NOCASE
-        """
+        """,
+        (UNASSIGNED_CATEGORY,),
     ).fetchall()
     for row in legacy_categories:
         next_category_order += 1
@@ -413,6 +426,8 @@ def category_name_error(name: str) -> str | None:
         return "Category names may not exceed 80 characters."
     if name.casefold() == "all items":
         return "All items is reserved for the editor filter."
+    if name.casefold() == UNASSIGNED_CATEGORY.casefold():
+        return f"{UNASSIGNED_CATEGORY} is reserved for hidden items."
     return None
 
 
@@ -420,6 +435,8 @@ def canonical_category(value: str) -> str | None:
     display_name = clean_category_name(value)
     if not display_name:
         return None
+    if display_name.casefold() == UNASSIGNED_CATEGORY.casefold():
+        return UNASSIGNED_CATEGORY
     existing = get_db().execute(
         "SELECT name FROM menu_categories WHERE name = ? COLLATE NOCASE",
         (display_name,),
@@ -589,7 +606,12 @@ def register_routes(app: Flask) -> None:
     def menu():
         categories = get_categories()
         rows = get_db().execute(
-            f"SELECT * FROM menu_items ORDER BY {category_order_sql()}, sort_order, id"
+            f"""
+            SELECT * FROM menu_items
+            WHERE category != ? COLLATE NOCASE
+            ORDER BY {category_order_sql()}, sort_order, id
+            """,
+            (UNASSIGNED_CATEGORY,),
         ).fetchall()
         grouped = {category: [] for category in categories}
         for row in rows:
@@ -615,6 +637,8 @@ def register_routes(app: Flask) -> None:
             (item_id,),
         ).fetchone()
         if item is None:
+            abort(404)
+        if item["category"].casefold() == UNASSIGNED_CATEGORY.casefold():
             abort(404)
         if not item["available"]:
             flash(f"{item['name']} is currently out.", "error")
@@ -693,11 +717,12 @@ def register_routes(app: Flask) -> None:
             category_row["can_move_up"] = index > 0
             category_row["can_move_down"] = index < len(category_rows) - 1
         categories = [row["name"] for row in category_rows]
+        editor_categories = [*categories, UNASSIGNED_CATEGORY]
         selected_category = request.args.get("category", "All items")
         selected_status = request.args.get("status", "all")
         conditions = []
         values = []
-        if selected_category in categories:
+        if selected_category in editor_categories:
             conditions.append("category = ?")
             values.append(selected_category)
         if selected_status in {"available", "out"}:
@@ -714,17 +739,19 @@ def register_routes(app: Flask) -> None:
             category_row["item_count"] = sum(
                 row["category"] == category_row["name"] for row in all_rows
             )
-            category_row["can_delete"] = len(category_rows) > 1
         counts = {
             "all": len(all_rows),
             "available": sum(row["available"] for row in all_rows),
             "out": sum(not row["available"] for row in all_rows),
-            **{category: sum(row["category"] == category for row in all_rows) for category in categories},
+            **{
+                category: sum(row["category"] == category for row in all_rows)
+                for category in editor_categories
+            },
         }
         order_rows = db.execute(
             f"SELECT id, category FROM menu_items ORDER BY {category_order_sql()}, sort_order, id"
         ).fetchall()
-        category_ids = {category: [] for category in categories}
+        category_ids = {category: [] for category in editor_categories}
         for row in order_rows:
             category_ids.setdefault(row["category"], []).append(row["id"])
         positions = {
@@ -746,7 +773,14 @@ def register_routes(app: Flask) -> None:
             items_json=items_json,
             counts=counts,
             categories=categories,
+            editor_categories=editor_categories,
             category_rows=category_rows,
+            unassigned_category=UNASSIGNED_CATEGORY,
+            default_item_category=(
+                selected_category
+                if selected_category in editor_categories
+                else categories[0] if categories else UNASSIGNED_CATEGORY
+            ),
             selected_category=selected_category,
             selected_status=selected_status,
         )
@@ -905,37 +939,107 @@ def register_routes(app: Flask) -> None:
         if category is None:
             abort(404)
 
-        category_count = db.execute(
-            "SELECT COUNT(*) FROM menu_categories"
-        ).fetchone()[0]
-        if category_count <= 1:
-            flash("The menu must keep at least one category.", "error")
-            return redirect(url_for("host_editor", manage_categories="1"))
-
         items = db.execute(
-            "SELECT image FROM menu_items WHERE category = ? COLLATE NOCASE",
+            """
+            SELECT id, image FROM menu_items
+            WHERE category = ? COLLATE NOCASE
+            ORDER BY sort_order, id
+            """,
             (category["name"],),
         ).fetchall()
+        item_action = request.form.get("item_action", "")
+        if not items:
+            item_action = "delete"
+        if item_action not in {"delete", "existing", "new", "unassigned"}:
+            flash("Choose what should happen to the category's items.", "error")
+            return redirect(url_for("host_editor", manage_categories="1"))
 
-        db.execute(
-            "DELETE FROM menu_items WHERE category = ? COLLATE NOCASE",
-            (category["name"],),
-        )
+        target_category = None
+        if item_action == "existing":
+            requested_target = clean_category_name(
+                request.form.get("target_category", "")
+            )
+            target = db.execute(
+                """
+                SELECT name FROM menu_categories
+                WHERE name = ? COLLATE NOCASE AND id != ?
+                """,
+                (requested_target, category_id),
+            ).fetchone()
+            if target is None:
+                flash("Choose another existing category.", "error")
+                return redirect(url_for("host_editor", manage_categories="1"))
+            target_category = target["name"]
+        elif item_action == "new":
+            target_category = clean_category_name(
+                request.form.get("new_category", "")
+            )
+            error = category_name_error(target_category)
+            if error:
+                flash(error, "error")
+                return redirect(url_for("host_editor", manage_categories="1"))
+            existing = db.execute(
+                "SELECT name FROM menu_categories WHERE name = ? COLLATE NOCASE",
+                (target_category,),
+            ).fetchone()
+            if existing:
+                flash(
+                    f"Category {existing['name']} already exists; select it instead.",
+                    "error",
+                )
+                return redirect(url_for("host_editor", manage_categories="1"))
+            next_category_order = db.execute(
+                "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM menu_categories"
+            ).fetchone()[0]
+            db.execute(
+                "INSERT INTO menu_categories (name, sort_order) VALUES (?, ?)",
+                (target_category, next_category_order),
+            )
+        elif item_action == "unassigned":
+            target_category = UNASSIGNED_CATEGORY
+
+        if item_action == "delete":
+            db.execute(
+                "DELETE FROM menu_items WHERE category = ? COLLATE NOCASE",
+                (category["name"],),
+            )
+        else:
+            next_item_order = db.execute(
+                """
+                SELECT COALESCE(MAX(sort_order), 0)
+                FROM menu_items WHERE category = ? COLLATE NOCASE
+                """,
+                (target_category,),
+            ).fetchone()[0]
+            db.executemany(
+                """
+                UPDATE menu_items
+                SET category = ?, sort_order = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                [
+                    (target_category, next_item_order + index, item["id"])
+                    for index, item in enumerate(items, start=1)
+                ],
+            )
         db.execute("DELETE FROM menu_categories WHERE id = ?", (category_id,))
         normalize_category_positions(db)
         db.commit()
-        for item in items:
-            delete_uploaded_image(item["image"])
+        if item_action == "delete":
+            for item in items:
+                delete_uploaded_image(item["image"])
 
         item_count = len(items)
-        if item_count:
+        if not item_count:
+            message = f"Removed category {category['name']}."
+        elif item_action == "delete":
             noun = "item" if item_count == 1 else "items"
-            flash(
-                f"Deleted category {category['name']} and {item_count} {noun}.",
-                "success",
-            )
+            message = f"Removed category {category['name']} and deleted {item_count} {noun}."
+        elif item_action == "unassigned":
+            message = f"Removed category {category['name']}; its items are now hidden in {UNASSIGNED_CATEGORY}."
         else:
-            flash(f"Deleted category {category['name']}.", "success")
+            message = f"Removed category {category['name']} and moved its items to {target_category}."
+        flash(message, "success")
         return redirect(url_for("host_editor", manage_categories="1"))
 
     @app.post("/host/category/<int:category_id>/move/<direction>")

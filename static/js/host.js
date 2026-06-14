@@ -4,6 +4,8 @@ const items = new Map(
 
 const itemDialog = document.querySelector("#item-dialog");
 const categoryDialog = document.querySelector("#category-dialog");
+const categoryRemoveDialog = document.querySelector("#category-remove-dialog");
+const categoryRemoveForm = document.querySelector("#category-remove-form");
 const bulkDialog = document.querySelector("#bulk-dialog");
 
 function openItemDialog(item = null) {
@@ -46,6 +48,49 @@ document.querySelectorAll(".js-edit-item").forEach((button) => {
 
 document.querySelectorAll(".js-bulk-import").forEach((button) => {
   button.addEventListener("click", () => bulkDialog.showModal());
+});
+
+function updateCategoryRemovalFields() {
+  const action = categoryRemoveForm.querySelector('input[name="item_action"]:checked')?.value;
+  const targetSelect = document.querySelector("#remove-target-category");
+  const newCategoryInput = document.querySelector("#remove-new-category");
+  targetSelect.disabled = action !== "existing";
+  newCategoryInput.disabled = action !== "new";
+  if (action === "new") newCategoryInput.focus();
+}
+
+document.querySelectorAll(".js-remove-category").forEach((button) => {
+  button.addEventListener("click", () => {
+    const itemCount = Number(button.dataset.itemCount);
+    const targetSelect = document.querySelector("#remove-target-category");
+    const existingRadio = categoryRemoveForm.querySelector('input[value="existing"]');
+
+    categoryRemoveForm.action = button.dataset.action;
+    document.querySelector("#remove-category-name").textContent = button.dataset.categoryName;
+    document.querySelector("#remove-category-count").textContent = `${itemCount} item${itemCount === 1 ? "" : "s"}`;
+    document.querySelector("#category-removal-options").hidden = itemCount === 0;
+    document.querySelector("#empty-category-removal").hidden = itemCount !== 0;
+
+    let firstDestination = "";
+    Array.from(targetSelect.options).forEach((option) => {
+      option.disabled = option.value.toLocaleLowerCase() === button.dataset.categoryName.toLocaleLowerCase();
+      if (!option.disabled && !firstDestination) firstDestination = option.value;
+    });
+    targetSelect.value = firstDestination;
+    existingRadio.disabled = !firstDestination;
+
+    const defaultAction = itemCount === 0 ? "delete" : "unassigned";
+    categoryRemoveForm.querySelector(`input[value="${defaultAction}"]`).checked = true;
+    document.querySelector("#remove-new-category").value = "";
+    updateCategoryRemovalFields();
+
+    categoryDialog.close();
+    categoryRemoveDialog.showModal();
+  });
+});
+
+categoryRemoveForm.querySelectorAll('input[name="item_action"]').forEach((radio) => {
+  radio.addEventListener("change", updateCategoryRemovalFields);
 });
 
 document.querySelectorAll(".js-delete-form").forEach((form) => {

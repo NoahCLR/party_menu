@@ -25,9 +25,9 @@
         <a class="filter-link{% if selected_category == 'All items' %} active{% endif %}" href="{{ url_for('host_editor', status=selected_status) }}">
           <span>All items</span><span>{{ counts['all'] }}</span>
         </a>
-        {% for category in categories %}
+        {% for category in editor_categories %}
           <a class="filter-link{% if selected_category == category %} active{% endif %}" href="{{ url_for('host_editor', category=category, status=selected_status) }}">
-            <span>{{ category }}</span><span>{{ counts[category] }}</span>
+            <span>{{ category }}{% if category == unassigned_category %} <small class="hidden-category-note">(hidden)</small>{% endif %}</span><span>{{ counts[category] }}</span>
           </a>
         {% endfor %}
       </div>
@@ -106,7 +106,7 @@
                   <strong>{{ item['name'] }}</strong>
                   <small>{{ item['description'] or 'No description' }}</small>
                 </td>
-                <td data-label="Category">{{ item['category'] }}</td>
+                <td data-label="Category">{{ item['category'] }}{% if item['category'] == unassigned_category %} <small class="hidden-category-note">(hidden)</small>{% endif %}</td>
                 <td data-label="Status">
                   <form method="post" action="{{ url_for('toggle_item', item_id=item['id']) }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -146,8 +146,8 @@
       <div class="form-grid">
         <label>Name<input name="name" id="item-name" required maxlength="120"></label>
         <label>Category
-          <select name="category" id="item-category" data-default-category="{{ selected_category if selected_category in categories else categories[0] }}" required>
-            {% for category in categories %}<option value="{{ category }}">{{ category }}</option>{% endfor %}
+          <select name="category" id="item-category" data-default-category="{{ default_item_category }}" required>
+            {% for category in editor_categories %}<option value="{{ category }}">{{ category }}{% if category == unassigned_category %} (hidden from guests){% endif %}</option>{% endfor %}
           </select>
         </label>
         <label class="full-field">Description<textarea name="description" id="item-description" rows="3" maxlength="500"></textarea></label>
@@ -170,7 +170,7 @@
         <div><span class="section-number">03</span><h2>Categories</h2></div>
         <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
       </div>
-      <p class="dialog-intro">Add, rename, reorder, or remove categories. Removing a category also permanently deletes every item in it.</p>
+      <p class="dialog-intro">Add, rename, reorder, or remove categories. When removing one, you choose what happens to its items.</p>
       <div class="category-manager" aria-label="Menu category order">
         {% for category in category_rows %}
           <div class="category-manager-row">
@@ -195,10 +195,14 @@
                 </form>
               </div>
               <span class="category-item-count">{{ category['item_count'] }} item{% if category['item_count'] != 1 %}s{% endif %}</span>
-              <form class="js-delete-form" method="post" action="{{ url_for('delete_category', category_id=category['id']) }}" data-name="category {{ category['name'] }}" data-confirm="Delete category {{ category['name'] }}{% if category['item_count'] %} and its {{ category['item_count'] }} item{% if category['item_count'] != 1 %}s{% endif %}{% endif %}?">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button class="icon-button category-delete-button" type="submit" aria-label="Delete category {{ category['name'] }}"{% if not category['can_delete'] %} disabled title="The menu must keep one category"{% endif %}>Delete</button>
-              </form>
+              <button
+                class="icon-button category-delete-button js-remove-category"
+                type="button"
+                aria-label="Remove category {{ category['name'] }}"
+                data-action="{{ url_for('delete_category', category_id=category['id']) }}"
+                data-category-name="{{ category['name'] }}"
+                data-item-count="{{ category['item_count'] }}"
+              >Remove</button>
             </div>
           </div>
         {% endfor %}
@@ -216,11 +220,50 @@
     </div>
   </dialog>
 
+  <dialog id="category-remove-dialog" class="editor-dialog category-remove-dialog">
+    <form id="category-remove-form" method="post" class="dialog-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="dialog-heading">
+        <div><span class="section-number">04</span><h2>Remove category</h2></div>
+        <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
+      </div>
+      <p class="dialog-intro">Removing <strong id="remove-category-name"></strong> affects <span id="remove-category-count"></span>.</p>
+      <fieldset id="category-removal-options" class="category-removal-options">
+        <legend>What should happen to its items?</legend>
+        <label class="removal-option">
+          <input type="radio" name="item_action" value="unassigned" checked>
+          <span><strong>Keep as Unassigned</strong><small>Items stay in the host editor but are hidden from guests.</small></span>
+        </label>
+        <label class="removal-option">
+          <input type="radio" name="item_action" value="existing">
+          <span><strong>Move to an existing category</strong><small>Keep the items visible in another menu section.</small></span>
+        </label>
+        <select name="target_category" id="remove-target-category" aria-label="Existing destination category">
+          {% for category in categories %}<option value="{{ category }}">{{ category }}</option>{% endfor %}
+        </select>
+        <label class="removal-option">
+          <input type="radio" name="item_action" value="new">
+          <span><strong>Move to a new category</strong><small>Create a new visible menu section for the items.</small></span>
+        </label>
+        <input name="new_category" id="remove-new-category" aria-label="New destination category" placeholder="New category name" maxlength="80" autocomplete="off">
+        <label class="removal-option removal-option-danger">
+          <input type="radio" name="item_action" value="delete">
+          <span><strong>Delete all items</strong><small>Permanently delete the category and everything in it.</small></span>
+        </label>
+      </fieldset>
+      <p id="empty-category-removal" class="empty-category-removal" hidden>This category is empty, so only the category itself will be removed.</p>
+      <div class="dialog-actions">
+        <button class="button button-outline" type="button" data-close-dialog>Cancel</button>
+        <button class="button button-dark" type="submit">Remove category</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="bulk-dialog" class="editor-dialog bulk-dialog">
     <form method="post" action="{{ url_for('bulk_import') }}" enctype="multipart/form-data" class="dialog-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="dialog-heading">
-        <div><span class="section-number">04</span><h2>Bulk import</h2></div>
+        <div><span class="section-number">05</span><h2>Bulk import</h2></div>
         <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
       </div>
       <p class="dialog-intro">Upload a CSV with image URLs, or a ZIP containing <code>menu.csv</code> and an <code>images/</code> folder.</p>

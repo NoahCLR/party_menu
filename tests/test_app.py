@@ -509,7 +509,7 @@ class MenuAppTestCase(unittest.TestCase):
             follow_redirects=True,
         )
 
-        self.assertIn(b"Deleted category Desserts", response.data)
+        self.assertIn(b"Removed category Desserts", response.data)
         self.assertNotIn(b'value="Desserts"', response.data)
         self.assertNotIn(b"Desserts", self.client.get("/").data)
 
@@ -525,15 +525,15 @@ class MenuAppTestCase(unittest.TestCase):
         token = self.token_from("/host?manage_categories=1")
         response = self.client.post(
             f"/host/category/{category_id}/delete",
-            data={"csrf_token": token},
+            data={"csrf_token": token, "item_action": "delete"},
             follow_redirects=True,
         )
 
-        self.assertIn(b"Deleted category Snacks and 6 items", response.data)
+        self.assertIn(b"Removed category Snacks and deleted 6 items", response.data)
         self.assertNotIn(b'value="Snacks"', response.data)
         self.assertNotIn(b"Jonge Kaasblokjes", self.client.get("/").data)
 
-    def test_host_cannot_delete_the_final_category(self):
+    def test_host_can_keep_removed_category_items_unassigned_and_hidden(self):
         self.login()
         with self.app.app_context():
             from app import get_db
@@ -549,12 +549,148 @@ class MenuAppTestCase(unittest.TestCase):
         token = self.token_from("/host?manage_categories=1")
         response = self.client.post(
             f"/host/category/{category['id']}/delete",
+            data={"csrf_token": token, "item_action": "unassigned"},
+            follow_redirects=True,
+        )
+
+        self.assertIn(b"items are now hidden in Unassigned", response.data)
+        self.assertIn(b'Unassigned <small class="hidden-category-note">(hidden)</small>', response.data)
+
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM menu_categories").fetchone()[0], 0
+            )
+            self.assertGreater(
+                db.execute(
+                    "SELECT COUNT(*) FROM menu_items WHERE category = 'Unassigned'"
+                ).fetchone()[0],
+                0,
+            )
+
+        public_response = self.client.get("/")
+        self.assertIn(b"0 items available", public_response.data)
+        self.assertNotIn(b"Espresso Martini", public_response.data)
+        with self.app.app_context():
+            from app import get_db
+
+            hidden_item_id = get_db().execute(
+                "SELECT id FROM menu_items WHERE category = 'Unassigned' LIMIT 1"
+            ).fetchone()[0]
+        self.assertEqual(self.client.get(f"/order/item/{hidden_item_id}").status_code, 404)
+
+        create_app(
+            {
+                "TESTING": True,
+                "SECRET_KEY": "test-secret",
+                "ADMIN_PASSWORD": "party-password",
+                "DATA_DIR": self.temp_dir.name,
+            }
+        )
+        with self.app.app_context():
+            from app import get_db
+
+            self.assertEqual(
+                get_db().execute("SELECT COUNT(*) FROM menu_categories").fetchone()[0],
+                0,
+            )
+
+    def test_host_can_move_removed_category_items_to_existing_category(self):
+        self.login()
+        with self.app.app_context():
+            from app import get_db
+
+            category_id = get_db().execute(
+                "SELECT id FROM menu_categories WHERE name = 'Snacks'"
+            ).fetchone()[0]
+
+        token = self.token_from("/host?manage_categories=1")
+        response = self.client.post(
+            f"/host/category/{category_id}/delete",
+            data={
+                "csrf_token": token,
+                "item_action": "existing",
+                "target_category": "Cocktails",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertIn(b"moved its items to Cocktails", response.data)
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM menu_items WHERE category = 'Cocktails'"
+                ).fetchone()[0],
+                15,
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM menu_categories WHERE name = 'Snacks'"
+                ).fetchone()[0],
+                0,
+            )
+
+        public_response = self.client.get("/")
+        self.assertNotIn(b'href="#category-5">Snacks</a>', public_response.data)
+        self.assertIn(b"Jonge Kaasblokjes", public_response.data)
+
+    def test_host_can_move_removed_category_items_to_new_category(self):
+        self.login()
+        with self.app.app_context():
+            from app import get_db
+
+            category_id = get_db().execute(
+                "SELECT id FROM menu_categories WHERE name = 'Hard Drinks'"
+            ).fetchone()[0]
+
+        token = self.token_from("/host?manage_categories=1")
+        response = self.client.post(
+            f"/host/category/{category_id}/delete",
+            data={
+                "csrf_token": token,
+                "item_action": "new",
+                "new_category": "Spirits",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertIn(b"moved its items to Spirits", response.data)
+        self.assertIn(b'value="Spirits"', response.data)
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM menu_items WHERE category = 'Spirits'"
+                ).fetchone()[0],
+                4,
+            )
+        self.assertIn(b"Spirits", self.client.get("/").data)
+
+    def test_removing_populated_category_requires_an_item_action(self):
+        self.login()
+        with self.app.app_context():
+            from app import get_db
+
+            category_id = get_db().execute(
+                "SELECT id FROM menu_categories WHERE name = 'Snacks'"
+            ).fetchone()[0]
+
+        token = self.token_from("/host?manage_categories=1")
+        response = self.client.post(
+            f"/host/category/{category_id}/delete",
             data={"csrf_token": token},
             follow_redirects=True,
         )
 
-        self.assertIn(b"The menu must keep at least one category", response.data)
-        self.assertIn(category["name"].encode(), response.data)
+        self.assertIn(b"Choose what should happen", response.data)
+        self.assertIn(b'value="Snacks"', response.data)
 
     def test_category_names_are_unique_case_insensitively(self):
         self.login()
@@ -574,6 +710,14 @@ class MenuAppTestCase(unittest.TestCase):
                 ("cocktails",),
             ).fetchone()[0]
         self.assertEqual(count, 1)
+
+        token = self.token_from("/host")
+        response = self.client.post(
+            "/host/category/save",
+            data={"csrf_token": token, "name": "Unassigned"},
+            follow_redirects=True,
+        )
+        self.assertIn(b"Unassigned is reserved for hidden items", response.data)
 
     def test_bulk_csv_import(self):
         self.login()

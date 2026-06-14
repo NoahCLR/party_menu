@@ -1027,10 +1027,86 @@ img {
   white-space: nowrap;
 }
 
+.hidden-category-note {
+  color: var(--gray-500);
+  font-size: 0.72em;
+}
+
 .category-delete-button:disabled {
   color: var(--gray-500);
   cursor: not-allowed;
   text-decoration: none;
+}
+
+.category-remove-dialog {
+  width: min(650px, calc(100vw - 28px));
+}
+
+.category-removal-options {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.category-removal-options legend {
+  margin-bottom: 12px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.removal-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 13px 14px;
+  border: 1px solid var(--black);
+  cursor: pointer;
+}
+
+.removal-option input {
+  margin-top: 3px;
+}
+
+.removal-option span {
+  display: grid;
+  gap: 4px;
+}
+
+.removal-option small {
+  color: var(--gray-700);
+  line-height: 1.35;
+}
+
+.category-removal-options > select,
+.category-removal-options > input {
+  width: 100%;
+  min-height: 42px;
+  margin-bottom: 4px;
+  padding: 9px 11px;
+  color: var(--black);
+  background: var(--white);
+  border: 1px solid var(--black);
+  border-radius: 0;
+}
+
+.category-removal-options > :disabled {
+  color: var(--gray-500);
+  background: var(--gray-100);
+}
+
+.removal-option-danger {
+  margin-top: 4px;
+}
+
+.empty-category-removal {
+  padding: 18px;
+  background: var(--gray-100);
+  line-height: 1.5;
 }
 
 .dialog-actions {
