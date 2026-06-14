@@ -59,6 +59,7 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(b'aria-label="Order Espresso Martini"', response.data)
         self.assertIn(b'id="menu-search-input"', response.data)
         self.assertIn(b"Search names and descriptions", response.data)
+        self.assertIn(b'aria-label="Clear search"', response.data)
         self.assertRegex(response.data, rb'/static/js/menu\.js\?v=\d+')
         image_paths = re.findall(rb'<img src="([^"]+)"', response.data)
         self.assertEqual(len(image_paths), 25)

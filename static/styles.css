@@ -123,24 +123,26 @@ img {
 }
 
 .menu-search-control {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  position: relative;
 }
 
-.menu-search-control input,
-.menu-search-control button {
+.menu-search-control input {
+  width: 100%;
+  min-width: 0;
   min-height: 50px;
+  padding: 12px 56px 12px 15px;
+  -webkit-appearance: none;
+  appearance: none;
   color: var(--white);
   background: var(--black);
   border: 1px solid var(--white);
   border-radius: 0;
+  font-size: 1rem;
 }
 
-.menu-search-control input {
-  min-width: 0;
-  padding: 12px 15px;
-  border-right: 0;
-  font-size: 1rem;
+.menu-search-control input::-webkit-search-cancel-button {
+  display: none;
+  -webkit-appearance: none;
 }
 
 .menu-search-control input::placeholder {
@@ -148,11 +150,19 @@ img {
 }
 
 .menu-search-control button {
-  padding: 10px 18px;
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  width: 48px;
+  padding: 0;
+  color: var(--white);
+  background: var(--black);
+  border: 0;
+  border-left: 1px solid var(--white);
+  border-radius: 0;
+  font-size: 1.55rem;
+  line-height: 1;
   cursor: pointer;
 }
 
@@ -1388,11 +1398,7 @@ code {
   }
 
   .menu-search-control input {
-    font-size: 0.9rem;
-  }
-
-  .menu-search-control button {
-    padding-inline: 13px;
+    font-size: 16px;
   }
 
   :root {

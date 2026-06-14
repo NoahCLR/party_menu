@@ -16,7 +16,7 @@
       <label for="menu-search-input">Search food and drinks</label>
       <div class="menu-search-control">
         <input id="menu-search-input" type="search" placeholder="Search names and descriptions" autocomplete="off" spellcheck="false">
-        <button id="menu-search-clear" type="button" hidden>Clear</button>
+        <button id="menu-search-clear" type="button" aria-label="Clear search" hidden><span aria-hidden="true">×</span></button>
       </div>
       <p id="menu-search-status" aria-live="polite">{{ total_count }} menu item{% if total_count != 1 %}s{% endif %}</p>
     </div>
