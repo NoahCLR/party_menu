@@ -1,10 +1,64 @@
 # Tonight's Menu
 
-A mobile-first party menu and lightweight ordering system. Guests can browse,
-search, order one item immediately, or build a basket. The host manages the menu
-through a password-protected editor and receives orders through Pushover.
+**Tonight's Menu** is a self-hosted, mobile-first menu and lightweight ordering
+system for house parties, home bars, tasting nights, and small private events.
+Guests open one link, browse what is available, and send an order without making
+an account or installing an app. The host edits the menu from a protected panel
+and receives orders as Pushover notifications.
 
-The application is designed to run from a Git-backed Portainer stack behind
+It is designed for the space between a printed drinks list and a full restaurant
+POS: quick to deploy, easy to operate during a party, and simple enough to keep
+running on your own Docker host.
+
+<p align="center">
+  <img src="docs/images/guest-menu.webp" alt="Tonight's Menu guest interface showing categories, item photos, descriptions, and availability" width="460">
+</p>
+
+## Why Use It?
+
+- **Guests need no account.** Share a URL or QR code and they can order from any
+  modern phone browser.
+- **The menu stays current.** Mark something out, reorder items, or add a new
+  drink while the event is running.
+- **Orders arrive where the host already looks.** Pushover sends concise iPhone
+  notifications instead of requiring another dashboard to monitor.
+- **Recipes stay private.** Guests see the menu description; the host receives
+  preparation details after the order summary.
+- **It remains your data.** SQLite, uploads, and backups stay on your own Docker
+  host, with no menu SaaS subscription or vendor account beyond Pushover.
+- **It is recoverable.** Full ZIP exports preserve categories, items, recipes,
+  availability, ordering, crop focus, and local images.
+
+## How It Works
+
+1. The host publishes categories and items, including photos, availability, and
+   optional private recipes.
+2. Guests browse or search the menu and either order one item immediately or add
+   several items to a basket.
+3. The host receives one Pushover message with the complete order first and the
+   relevant recipes underneath.
+
+The host interface is built for quick changes before and during an event:
+
+<p align="center">
+  <img src="docs/images/host-editor.webp" alt="Tonight's Menu host editor showing menu management, availability controls, bulk import, and item editing" width="920">
+</p>
+
+> The screenshots use example menu data. Your categories, items, images, and
+> availability are managed from the host editor.
+
+## Intended Scope
+
+This project is a good fit for private events where one host prepares and serves
+the orders. It deliberately avoids the complexity of a commercial restaurant
+platform.
+
+It includes menu management, availability, guest names, notes, single orders,
+baskets, recipes, and push notifications. It does **not** include payments,
+customer accounts, table numbers, inventory deduction, kitchen tickets, or a
+multi-user order queue.
+
+The provided production setup runs from a Git-backed Portainer stack behind
 Nginx and an existing Cloudflare Tunnel. Menu data and uploaded images are stored
 in a persistent Docker volume.
 
