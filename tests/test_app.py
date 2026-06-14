@@ -278,6 +278,13 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertRegex(response.text, r'/static/styles\.css\?v=\d+')
         self.assertRegex(response.text, r'/static/js/host\.js\?v=\d+')
 
+        stylesheet_response = self.client.get("/static/styles.css")
+        stylesheet = stylesheet_response.text
+        stylesheet_response.close()
+        self.assertIn('body input:not([type="hidden"])', stylesheet)
+        self.assertIn("body select,", stylesheet)
+        self.assertIn("body textarea {\n    font-size: 16px;", stylesheet)
+
     def test_host_can_add_and_disable_item(self):
         self.login()
         token = self.token_from("/host")

@@ -1391,6 +1391,14 @@ code {
   }
 }
 
+@media (max-width: 760px), (hover: none) and (pointer: coarse) {
+  body input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]):not([type="file"]):not([type="button"]):not([type="submit"]),
+  body select,
+  body textarea {
+    font-size: 16px;
+  }
+}
+
 @media (max-width: 760px) {
   .menu-search-inner {
     grid-template-columns: 1fr;
@@ -1402,10 +1410,6 @@ code {
     margin: 2px 0 0;
     font-size: 0.68rem;
     white-space: normal;
-  }
-
-  .menu-search-control input {
-    font-size: 16px;
   }
 
   :root {
