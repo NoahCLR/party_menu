@@ -11,6 +11,7 @@ import sqlite3
 import time
 import uuid
 import zipfile
+from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -57,7 +58,10 @@ MAX_BASKET_DISTINCT_ITEMS = 25
 MAX_BASKET_QUANTITY = 20
 MAX_BASKET_TOTAL_ITEMS = 50
 MAX_PUSHOVER_MESSAGE_LENGTH = 1024
-EXPORT_FORMAT_VERSION = 1
+MAX_RECIPE_INGREDIENTS = 20
+MAX_RECIPE_INGREDIENT_NAME_LENGTH = 80
+MAX_RECIPE_ML = Decimal("10000")
+EXPORT_FORMAT_VERSION = 2
 MENU_EXPORT_COLUMNS = (
     "name",
     "description",
@@ -67,6 +71,7 @@ MENU_EXPORT_COLUMNS = (
     "image_filename",
     "category_order",
     "sort_order",
+    "recipe",
 )
 
 
@@ -284,6 +289,7 @@ def init_db() -> None:
             image TEXT NOT NULL DEFAULT '',
             available INTEGER NOT NULL DEFAULT 1,
             sort_order INTEGER NOT NULL DEFAULT 0,
+            recipe TEXT NOT NULL DEFAULT '[]',
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
@@ -299,6 +305,13 @@ def init_db() -> None:
         );
         """
     )
+    menu_item_columns = {
+        row["name"] for row in db.execute("PRAGMA table_info(menu_items)").fetchall()
+    }
+    if "recipe" not in menu_item_columns:
+        db.execute(
+            "ALTER TABLE menu_items ADD COLUMN recipe TEXT NOT NULL DEFAULT '[]'"
+        )
     db.execute("BEGIN IMMEDIATE")
     categories_initialized = db.execute(
         "SELECT value FROM app_meta WHERE key = 'categories_initialized'"
@@ -495,6 +508,80 @@ def clean_guest_name(value: str | None) -> str:
     return " ".join((value or "").strip().split())[:80]
 
 
+def normalize_recipe(entries: object) -> list[dict[str, str]]:
+    if entries in (None, ""):
+        return []
+    if not isinstance(entries, list):
+        raise ValueError("Recipe must be a list of ingredients.")
+    if len(entries) > MAX_RECIPE_INGREDIENTS:
+        raise ValueError(
+            f"Recipes may contain at most {MAX_RECIPE_INGREDIENTS} ingredients."
+        )
+
+    recipe = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("Each recipe ingredient must include a name and ml value.")
+        name = " ".join(str(entry.get("name", "")).strip().split())
+        raw_ml = str(entry.get("ml", "")).strip()
+        if not name and not raw_ml:
+            continue
+        if not name:
+            raise ValueError("Every recipe amount needs an ingredient name.")
+        if len(name) > MAX_RECIPE_INGREDIENT_NAME_LENGTH:
+            raise ValueError(
+                "Recipe ingredient names may not exceed "
+                f"{MAX_RECIPE_INGREDIENT_NAME_LENGTH} characters."
+            )
+
+        ml = ""
+        if raw_ml:
+            try:
+                amount = Decimal(raw_ml)
+            except InvalidOperation as error:
+                raise ValueError(f"Invalid ml amount for {name}.") from error
+            if not amount.is_finite() or amount <= 0 or amount > MAX_RECIPE_ML:
+                raise ValueError(
+                    f"The ml amount for {name} must be between 0 and {MAX_RECIPE_ML}."
+                )
+            if amount.as_tuple().exponent < -2:
+                raise ValueError(
+                    f"The ml amount for {name} may have two decimals at most."
+                )
+            ml = format(amount.normalize(), "f")
+        recipe.append({"name": name, "ml": ml})
+    return recipe
+
+
+def parse_recipe_json(value: str | None) -> list[dict[str, str]]:
+    if not value:
+        return []
+    try:
+        entries = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise ValueError("Recipe must be valid JSON.") from error
+    return normalize_recipe(entries)
+
+
+def parse_recipe_form() -> list[dict[str, str]]:
+    names = request.form.getlist("recipe_name")
+    amounts = request.form.getlist("recipe_ml")
+    row_count = max(len(names), len(amounts))
+    return normalize_recipe(
+        [
+            {
+                "name": names[index] if index < len(names) else "",
+                "ml": amounts[index] if index < len(amounts) else "",
+            }
+            for index in range(row_count)
+        ]
+    )
+
+
+def recipe_json(recipe: list[dict[str, str]]) -> str:
+    return json.dumps(recipe, ensure_ascii=True, separators=(",", ":"))
+
+
 def clean_image_reference(value: str | None) -> str:
     value = (value or "").strip()
     if value.startswith(("https://", "http://", "/uploads/", "/static/")):
@@ -599,12 +686,48 @@ def send_pushover_message(title: str, message: str) -> None:
         raise PushoverError("Pushover rejected the message.")
 
 
-def send_pushover_order(
-    item_name: str, category: str, guest_name: str, note: str
-) -> None:
+def format_recipe_section(items: list[dict]) -> str:
+    recipes = []
+    for item in items:
+        recipe = item.get("recipe") or []
+        if not recipe:
+            continue
+        lines = [item["name"]]
+        lines.extend(
+            f"- {ingredient['ml']} ml {ingredient['name']}"
+            if ingredient["ml"]
+            else f"- {ingredient['name']}"
+            for ingredient in recipe
+        )
+        recipes.append("\n".join(lines))
+    return "\n\n".join(recipes)
+
+
+def format_single_order_message(
+    item_name: str,
+    category: str,
+    note: str,
+    recipe: list[dict[str, str]],
+) -> str:
     message = f"Item: {item_name}\nCategory: {category}"
     if note:
         message += f"\nNote: {note}"
+    recipe_section = format_recipe_section(
+        [{"name": item_name, "recipe": recipe}]
+    )
+    if recipe_section:
+        message += f"\n\nRecipe:\n{recipe_section}"
+    return message
+
+
+def send_pushover_order(
+    item_name: str,
+    category: str,
+    guest_name: str,
+    note: str,
+    recipe: list[dict[str, str]],
+) -> None:
+    message = format_single_order_message(item_name, category, note, recipe)
     send_pushover_message(f"Order from {guest_name}", message)
 
 
@@ -613,7 +736,11 @@ def format_basket_message(items: list[dict], note: str) -> str:
     lines.extend(f"{item['quantity']}x {item['name']}" for item in items)
     if note:
         lines.append(f"Note: {note}")
-    return "\n".join(lines)
+    message = "\n".join(lines)
+    recipe_section = format_recipe_section(items)
+    if recipe_section:
+        message += f"\n\nRecipes:\n{recipe_section}"
+    return message
 
 
 def send_pushover_basket_order(
@@ -720,21 +847,32 @@ def register_routes(app: Flask) -> None:
     def order_basket():
         catalog_rows = get_db().execute(
             f"""
-            SELECT id, name, category
+            SELECT id, name, category, recipe
             FROM menu_items
             WHERE available = 1 AND category != ? COLLATE NOCASE
             ORDER BY {category_order_sql()}, sort_order, id
             """,
             (UNASSIGNED_CATEGORY,),
         ).fetchall()
-        catalog = [dict(row) for row in catalog_rows]
+        catalog = []
+        for row in catalog_rows:
+            item = dict(row)
+            item["recipe"] = parse_recipe_json(item["recipe"])
+            catalog.append(item)
         catalog_by_id = {item["id"]: item for item in catalog}
+        public_catalog = [
+            {"id": item["id"], "name": item["name"], "category": item["category"]}
+            for item in catalog
+        ]
         guest_name = clean_guest_name(request.cookies.get(GUEST_NAME_COOKIE))
         note = ""
 
         def render_basket(status: int = 200):
             rendered = render_template(
-                "basket.html", catalog=catalog, guest_name=guest_name, note=note
+                "basket.html",
+                catalog=public_catalog,
+                guest_name=guest_name,
+                note=note,
             )
             return (rendered, status) if status != 200 else rendered
 
@@ -816,7 +954,10 @@ def register_routes(app: Flask) -> None:
     @app.route("/order/item/<int:item_id>", methods=("GET", "POST"))
     def order_item(item_id: int):
         item = get_db().execute(
-            "SELECT name, description, category, available FROM menu_items WHERE id = ?",
+            """
+            SELECT name, description, category, available, recipe
+            FROM menu_items WHERE id = ?
+            """,
             (item_id,),
         ).fetchone()
         if item is None:
@@ -862,8 +1003,24 @@ def register_routes(app: Flask) -> None:
                 "order.html", item=item, guest_name=guest_name, note=note
             ), 429
 
+        recipe = parse_recipe_json(item["recipe"])
+        message = format_single_order_message(
+            item["name"], item["category"], note, recipe
+        )
+        if len(message.encode("utf-8")) > MAX_PUSHOVER_MESSAGE_LENGTH:
+            flash(
+                "This order is too long to send. Shorten the note or ask the host "
+                "to shorten the recipe.",
+                "error",
+            )
+            return render_template(
+                "order.html", item=item, guest_name=guest_name, note=note
+            ), 400
+
         try:
-            send_pushover_order(item["name"], item["category"], guest_name, note)
+            send_pushover_order(
+                item["name"], item["category"], guest_name, note, recipe
+            )
         except PushoverError as error:
             current_app.logger.warning("Could not send order: %s", error)
             flash("The order could not be sent. Please tell the host.", "error")
@@ -960,6 +1117,7 @@ def register_routes(app: Flask) -> None:
         items_for_template = []
         for row in rows:
             item = dict(row)
+            item["recipe"] = parse_recipe_json(item["recipe"])
             position, category_count = positions[item["id"]]
             item["can_move_up"] = position > 0
             item["can_move_down"] = position < category_count - 1
@@ -999,6 +1157,13 @@ def register_routes(app: Flask) -> None:
             return redirect(url_for("host_editor"))
 
         try:
+            recipe = parse_recipe_form()
+        except ValueError as error:
+            flash(str(error), "error")
+            return redirect(url_for("host_editor"))
+        stored_recipe = recipe_json(recipe)
+
+        try:
             uploaded_image = save_uploaded_image(request.files.get("image_file"))
         except ValueError as error:
             flash(str(error), "error")
@@ -1022,11 +1187,21 @@ def register_routes(app: Flask) -> None:
             db.execute(
                 """
                 UPDATE menu_items
-                SET name = ?, description = ?, category = ?, image = ?, available = ?, sort_order = ?,
+                SET name = ?, description = ?, category = ?, image = ?, available = ?,
+                    sort_order = ?, recipe = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (name, description, category, image, available, sort_order, item_id),
+                (
+                    name,
+                    description,
+                    category,
+                    image,
+                    available,
+                    sort_order,
+                    stored_recipe,
+                    item_id,
+                ),
             )
             if old["category"] != category:
                 normalize_category_order(db, old["category"])
@@ -1043,10 +1218,18 @@ def register_routes(app: Flask) -> None:
             db.execute(
                 """
                 INSERT INTO menu_items
-                    (name, description, category, image, available, sort_order)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (name, description, category, image, available, sort_order, recipe)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (name, description, category, image, available, next_order),
+                (
+                    name,
+                    description,
+                    category,
+                    image,
+                    available,
+                    next_order,
+                    stored_recipe,
+                ),
             )
             db.commit()
             flash(f"Added {name}.", "success")
@@ -1363,8 +1546,39 @@ def register_routes(app: Flask) -> None:
         content = io.StringIO()
         writer = csv.writer(content)
         writer.writerow(MENU_EXPORT_COLUMNS)
-        writer.writerow(("Espresso Martini", "Vodka, espresso, coffee liqueur.", "Cocktails", "yes", "", "images/espresso-martini.jpg", "1", "1"))
-        writer.writerow(("Sparkling Water", "Cold and fizzy.", "Booze, Beer & Wine", "yes", "https://example.com/water.jpg", "", "2", "1"))
+        writer.writerow(
+            (
+                "Espresso Martini",
+                "Vodka, espresso, coffee liqueur.",
+                "Cocktails",
+                "yes",
+                "",
+                "images/espresso-martini.jpg",
+                "1",
+                "1",
+                recipe_json(
+                    [
+                        {"name": "Vodka", "ml": "40"},
+                        {"name": "Espresso", "ml": "30"},
+                        {"name": "Coffee liqueur", "ml": "20"},
+                        {"name": "Ice", "ml": ""},
+                    ]
+                ),
+            )
+        )
+        writer.writerow(
+            (
+                "Sparkling Water",
+                "Cold and fizzy.",
+                "Booze, Beer & Wine",
+                "yes",
+                "https://example.com/water.jpg",
+                "",
+                "2",
+                "1",
+                "[]",
+            )
+        )
         payload = io.BytesIO(content.getvalue().encode("utf-8"))
         return send_file(payload, mimetype="text/csv", as_attachment=True, download_name="menu-template.csv")
 
@@ -1452,6 +1666,7 @@ def build_menu_export() -> io.BytesIO:
                 "image_filename": image_filename,
                 "category_order": category_orders.get(item["category"].casefold(), ""),
                 "sort_order": item["sort_order"],
+                "recipe": recipe_json(parse_recipe_json(item["recipe"])),
             }
         )
 
@@ -1577,6 +1792,11 @@ def append_bulk_items(
         if not name or not category:
             skipped += 1
             continue
+        try:
+            recipe = recipe_json(parse_recipe_json(row.get("recipe")))
+        except ValueError:
+            skipped += 1
+            continue
         image = clean_image_reference(row.get("image_url"))
         image_filename = row.get("image_filename", "").lstrip("./")
         if image_filename:
@@ -1587,8 +1807,8 @@ def append_bulk_items(
         db.execute(
             """
             INSERT INTO menu_items
-                (name, description, category, image, available, sort_order)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (name, description, category, image, available, sort_order, recipe)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -1597,6 +1817,7 @@ def append_bulk_items(
                 image,
                 parse_available(row.get("available")),
                 next_order,
+                recipe,
             ),
         )
         imported += 1
@@ -1620,6 +1841,12 @@ def replace_menu_from_archive(
         raw_category = clean_category_name(row.get("category", ""))
         if not name or not raw_category:
             raise ValueError(f"Invalid item on menu.csv row {row_number}.")
+        try:
+            recipe = recipe_json(parse_recipe_json(row.get("recipe")))
+        except ValueError as error:
+            raise ValueError(
+                f"Invalid recipe on menu.csv row {row_number}: {error}"
+            ) from error
         if raw_category.casefold() == UNASSIGNED_CATEGORY.casefold():
             category = UNASSIGNED_CATEGORY
         else:
@@ -1656,6 +1883,7 @@ def replace_menu_from_archive(
                 "category": category,
                 "available": parse_available(row.get("available")),
                 "sort_order": sort_order,
+                "recipe": recipe,
                 "image": image,
                 "image_match": image_match,
             }
@@ -1685,8 +1913,8 @@ def replace_menu_from_archive(
         db.executemany(
             """
             INSERT INTO menu_items
-                (name, description, category, image, available, sort_order)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (name, description, category, image, available, sort_order, recipe)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -1696,6 +1924,7 @@ def replace_menu_from_archive(
                     item["image"],
                     item["available"],
                     item["sort_order"],
+                    item["recipe"],
                 )
                 for item in prepared_items
             ],

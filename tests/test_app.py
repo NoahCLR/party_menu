@@ -83,7 +83,15 @@ class MenuAppTestCase(unittest.TestCase):
 
         with self.app.app_context(), patch("app.urlopen", return_value=response) as mocked:
             send_pushover_order(
-                "Espresso Martini", "Cocktails", "Noah", "Less ice, please"
+                "Espresso Martini",
+                "Cocktails",
+                "Noah",
+                "Less ice, please",
+                [
+                    {"name": "Vodka", "ml": "40"},
+                    {"name": "Espresso", "ml": "30"},
+                    {"name": "Ice", "ml": ""},
+                ],
             )
 
         pushover_request = mocked.call_args.args[0]
@@ -93,7 +101,10 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertEqual(payload["title"], ["Order from Noah"])
         self.assertEqual(
             payload["message"],
-            ["Item: Espresso Martini\nCategory: Cocktails\nNote: Less ice, please"],
+            [
+                "Item: Espresso Martini\nCategory: Cocktails\nNote: Less ice, please"
+                "\n\nRecipe:\nEspresso Martini\n- 40 ml Vodka\n- 30 ml Espresso\n- Ice"
+            ],
         )
         self.assertEqual(mocked.call_args.kwargs["timeout"], 5)
 
@@ -107,8 +118,23 @@ class MenuAppTestCase(unittest.TestCase):
         with self.app.app_context(), patch("app.urlopen", return_value=response) as mocked:
             send_pushover_basket_order(
                 [
-                    {"name": "Moscow Mule", "quantity": 2},
-                    {"name": "Garlic Olives", "quantity": 1},
+                    {
+                        "name": "Moscow Mule",
+                        "quantity": 2,
+                        "recipe": [
+                            {"name": "Vodka", "ml": "50"},
+                            {"name": "Ginger beer", "ml": "120"},
+                            {"name": "Lime wedge", "ml": ""},
+                        ],
+                    },
+                    {
+                        "name": "Gin & Tonic",
+                        "quantity": 1,
+                        "recipe": [
+                            {"name": "Gin", "ml": "50"},
+                            {"name": "Tonic", "ml": "150"},
+                        ],
+                    },
                 ],
                 "Noah",
                 "Bring together",
@@ -118,16 +144,34 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertEqual(payload["title"], ["Order from Noah"])
         self.assertEqual(
             payload["message"],
-            ["Items:\n2x Moscow Mule\n1x Garlic Olives\nNote: Bring together"],
+            [
+                "Items:\n2x Moscow Mule\n1x Gin & Tonic\nNote: Bring together"
+                "\n\nRecipes:\nMoscow Mule\n- 50 ml Vodka\n- 120 ml Ginger beer"
+                "\n- Lime wedge\n\nGin & Tonic\n- 50 ml Gin\n- 150 ml Tonic"
+            ],
         )
 
     def test_guest_can_order_available_item(self):
         with self.app.app_context():
             from app import get_db
 
-            item_id = get_db().execute(
+            db = get_db()
+            item_id = db.execute(
                 "SELECT id FROM menu_items WHERE name = 'Espresso Martini'"
             ).fetchone()[0]
+            db.execute(
+                "UPDATE menu_items SET recipe = ? WHERE id = ?",
+                (
+                    json.dumps(
+                        [
+                            {"name": "Vodka", "ml": "40"},
+                            {"name": "Ice", "ml": ""},
+                        ]
+                    ),
+                    item_id,
+                ),
+            )
+            db.commit()
 
         order_page = self.client.get(f"/order/item/{item_id}")
         self.assertIn(b"Your name", order_page.data)
@@ -146,8 +190,46 @@ class MenuAppTestCase(unittest.TestCase):
 
         self.assertIn(b"Order sent for Noah: Espresso Martini.", response.data)
         send_order.assert_called_once_with(
-            "Espresso Martini", "Cocktails", "Noah", "Less ice, please"
+            "Espresso Martini",
+            "Cocktails",
+            "Noah",
+            "Less ice, please",
+            [
+                {"name": "Vodka", "ml": "40"},
+                {"name": "Ice", "ml": ""},
+            ],
         )
+
+    def test_recipes_are_only_exposed_to_the_host(self):
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            item_id = db.execute(
+                "SELECT id FROM menu_items WHERE name = 'Espresso Martini'"
+            ).fetchone()[0]
+            db.execute(
+                "UPDATE menu_items SET recipe = ? WHERE id = ?",
+                (
+                    json.dumps(
+                        [{"name": "Private test ingredient", "ml": "42"}]
+                    ),
+                    item_id,
+                ),
+            )
+            db.commit()
+
+        self.assertNotIn(b"Private test ingredient", self.client.get("/").data)
+        self.assertNotIn(
+            b"Private test ingredient",
+            self.client.get(f"/order/item/{item_id}").data,
+        )
+        self.assertNotIn(
+            b"Private test ingredient", self.client.get("/order/basket").data
+        )
+
+        self.login()
+        self.assertIn(b"Private test ingredient", self.client.get("/host").data)
 
     def test_successful_order_remembers_only_the_latest_guest_name(self):
         self.app.config["ORDER_COOLDOWN_SECONDS"] = 0
@@ -228,6 +310,27 @@ class MenuAppTestCase(unittest.TestCase):
                 )
                 .fetchall()
             }
+            db = get_db()
+            db.execute(
+                "UPDATE menu_items SET recipe = ? WHERE id = ?",
+                (
+                    json.dumps(
+                        [
+                            {"name": "Vodka", "ml": "50"},
+                            {"name": "Ginger beer", "ml": "120"},
+                        ]
+                    ),
+                    item_ids["Moscow Mule"],
+                ),
+            )
+            db.execute(
+                "UPDATE menu_items SET recipe = ? WHERE id = ?",
+                (
+                    json.dumps([{"name": "Cocktail pick", "ml": ""}]),
+                    item_ids["Garlic Olives"],
+                ),
+            )
+            db.commit()
 
         token = self.token_from("/order/basket")
         basket = [
@@ -253,6 +356,17 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertEqual(
             [(item["name"], item["quantity"]) for item in sent_items],
             [("Moscow Mule", 2), ("Garlic Olives", 1)],
+        )
+        self.assertEqual(
+            sent_items[0]["recipe"],
+            [
+                {"name": "Vodka", "ml": "50"},
+                {"name": "Ginger beer", "ml": "120"},
+            ],
+        )
+        self.assertEqual(
+            sent_items[1]["recipe"],
+            [{"name": "Cocktail pick", "ml": ""}],
         )
         self.assertEqual(guest_name, "Noah")
         self.assertEqual(note, "Bring together")
@@ -452,6 +566,72 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(b"Tom Collins", public_response.data)
         self.assertIn(b"Out", public_response.data)
 
+    def test_host_can_add_and_edit_a_structured_recipe(self):
+        self.login()
+        token = self.token_from("/host")
+        response = self.client.post(
+            "/host/item/save",
+            data={
+                "csrf_token": token,
+                "name": "Test Cocktail",
+                "description": "A test drink.",
+                "category": "Cocktails",
+                "available": "1",
+                "recipe_name": ["Rum", "Lime juice", "Ice"],
+                "recipe_ml": ["50", "22.50", ""],
+            },
+            follow_redirects=True,
+        )
+        self.assertIn(b"Added Test Cocktail", response.data)
+        self.assertIn(b'"name": "Rum"', response.data)
+        self.assertIn(b'"ml": "22.5"', response.data)
+
+        with self.app.app_context():
+            from app import get_db
+
+            row = get_db().execute(
+                "SELECT id, recipe FROM menu_items WHERE name = 'Test Cocktail'"
+            ).fetchone()
+            item_id = row["id"]
+            self.assertEqual(
+                json.loads(row["recipe"]),
+                [
+                    {"name": "Rum", "ml": "50"},
+                    {"name": "Lime juice", "ml": "22.5"},
+                    {"name": "Ice", "ml": ""},
+                ],
+            )
+
+        token = self.token_from("/host")
+        response = self.client.post(
+            "/host/item/save",
+            data={
+                "csrf_token": token,
+                "item_id": str(item_id),
+                "name": "Test Cocktail",
+                "description": "A test drink.",
+                "category": "Cocktails",
+                "available": "1",
+                "recipe_name": ["Rum", "Orange peel"],
+                "recipe_ml": ["60", ""],
+            },
+            follow_redirects=True,
+        )
+        self.assertIn(b"Updated Test Cocktail", response.data)
+        with self.app.app_context():
+            from app import get_db
+
+            recipe = get_db().execute(
+                "SELECT recipe FROM menu_items WHERE id = ?", (item_id,)
+            ).fetchone()[0]
+        self.assertEqual(
+            json.loads(recipe),
+            [
+                {"name": "Rum", "ml": "60"},
+                {"name": "Orange peel", "ml": ""},
+            ],
+        )
+
     def test_existing_demo_database_is_migrated_once(self):
         with tempfile.TemporaryDirectory() as data_dir:
             database = sqlite3.connect(f"{data_dir}/menu.db")
@@ -525,12 +705,16 @@ class MenuAppTestCase(unittest.TestCase):
                     row[0]
                     for row in db.execute("SELECT name FROM menu_categories").fetchall()
                 }
+                port_recipe = db.execute(
+                    "SELECT recipe FROM menu_items WHERE name = 'Port'"
+                ).fetchone()[0]
 
             self.assertNotIn("Negroni", names)
             self.assertIn("Espresso Martini", names)
             self.assertIn("Cola", names)
             self.assertIn("Port", names)
             self.assertIn("After Dinner", categories)
+            self.assertEqual(port_recipe, "[]")
             self.assertEqual(version, "3")
 
     def test_image_migration_fills_blanks_without_overwriting_custom_images(self):
@@ -931,11 +1115,44 @@ class MenuAppTestCase(unittest.TestCase):
     def test_bulk_csv_import(self):
         self.login()
         token = self.token_from("/host")
-        csv_data = (
-            "name,description,category,available,image_url,image_filename\n"
-            "Popcorn,Butter and sea salt,Snacks,yes,,\n"
-            "Invalid row,Missing category,,yes,,\n"
-        ).encode()
+        csv_content = io.StringIO()
+        writer = csv.DictWriter(
+            csv_content,
+            fieldnames=(
+                "name",
+                "description",
+                "category",
+                "available",
+                "image_url",
+                "image_filename",
+                "recipe",
+            ),
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "name": "Popcorn",
+                "description": "Butter and sea salt",
+                "category": "Snacks",
+                "available": "yes",
+                "recipe": json.dumps(
+                    [
+                        {"name": "Butter", "ml": "15"},
+                        {"name": "Sea salt", "ml": ""},
+                    ]
+                ),
+            }
+        )
+        writer.writerow(
+            {
+                "name": "Invalid row",
+                "description": "Missing category",
+                "category": "",
+                "available": "yes",
+                "recipe": "[]",
+            }
+        )
+        csv_data = csv_content.getvalue().encode()
         response = self.client.post(
             "/host/bulk-import",
             data={
@@ -948,6 +1165,19 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(b"Imported 1 item", response.data)
         self.assertIn(b"Skipped 1 invalid row", response.data)
         self.assertIn(b"Popcorn", self.client.get("/").data)
+        with self.app.app_context():
+            from app import get_db
+
+            recipe = get_db().execute(
+                "SELECT recipe FROM menu_items WHERE name = 'Popcorn'"
+            ).fetchone()[0]
+        self.assertEqual(
+            json.loads(recipe),
+            [
+                {"name": "Butter", "ml": "15"},
+                {"name": "Sea salt", "ml": ""},
+            ],
+        )
 
     def test_host_can_export_and_restore_the_complete_menu(self):
         self.login()
@@ -977,10 +1207,21 @@ class MenuAppTestCase(unittest.TestCase):
             db.execute(
                 """
                 UPDATE menu_items
-                SET description = ?, available = 0, image = ?, sort_order = 1
+                SET description = ?, available = 0, image = ?, sort_order = 1,
+                    recipe = ?
                 WHERE name = 'Whiskey Sour'
                 """,
-                ("Rollback recipe", "/uploads/rollback-photo.jpg"),
+                (
+                    "Rollback recipe",
+                    "/uploads/rollback-photo.jpg",
+                    json.dumps(
+                        [
+                            {"name": "Whiskey", "ml": "60"},
+                            {"name": "Lemon juice", "ml": "30"},
+                            {"name": "Cherry", "ml": ""},
+                        ]
+                    ),
+                ),
             )
             db.execute(
                 "UPDATE menu_items SET sort_order = 2 WHERE name = 'Espresso Martini'"
@@ -1022,6 +1263,14 @@ class MenuAppTestCase(unittest.TestCase):
             fanta = next(row for row in menu_rows if row["name"] == "Fanta")
             self.assertEqual(whiskey["available"], "no")
             self.assertEqual(whiskey["sort_order"], "1")
+            self.assertEqual(
+                json.loads(whiskey["recipe"]),
+                [
+                    {"name": "Whiskey", "ml": "60"},
+                    {"name": "Lemon juice", "ml": "30"},
+                    {"name": "Cherry", "ml": ""},
+                ],
+            )
             self.assertTrue(whiskey["image_filename"].startswith("images/"))
             self.assertIn(whiskey["image_filename"], archive_names)
             self.assertEqual(fanta["category"], "Unassigned")
@@ -1073,7 +1322,7 @@ class MenuAppTestCase(unittest.TestCase):
             )
             whiskey = db.execute(
                 """
-                SELECT description, category, image, available, sort_order
+                SELECT description, category, image, available, sort_order, recipe
                 FROM menu_items WHERE name = 'Whiskey Sour'
                 """
             ).fetchone()
@@ -1081,6 +1330,14 @@ class MenuAppTestCase(unittest.TestCase):
             self.assertEqual(whiskey["category"], "Cocktails")
             self.assertEqual(whiskey["available"], 0)
             self.assertEqual(whiskey["sort_order"], 1)
+            self.assertEqual(
+                json.loads(whiskey["recipe"]),
+                [
+                    {"name": "Whiskey", "ml": "60"},
+                    {"name": "Lemon juice", "ml": "30"},
+                    {"name": "Cherry", "ml": ""},
+                ],
+            )
             self.assertTrue(whiskey["image"].startswith("/uploads/"))
             restored_image = Path(self.app.config["UPLOAD_DIR"]) / Path(
                 whiskey["image"]

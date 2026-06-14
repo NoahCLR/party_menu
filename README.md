@@ -8,6 +8,7 @@ A mobile-first party menu with a password-protected host editor. Guests browse t
 - Guest menu search across item names and descriptions
 - Clear `Out` state without removing an item
 - Fast single-item ordering plus an optional browser-local basket for one combined Pushover order
+- Host-only structured recipes appended after the order summary in Pushover notifications
 - Guest names remembered for future order forms without saving order notes
 - Host login controlled by an environment password
 - Add, rename, reorder, and remove public menu categories while deleting, moving, or hiding their items
@@ -37,7 +38,7 @@ Open `http://localhost:8000`. The editor is at `http://localhost:8000/host`.
 
 ## Bulk import
 
-Download the CSV template from the editor. Required columns are `name` and `category`. Optional columns are `description`, `available`, `image_url`, `image_filename`, `category_order`, and `sort_order`.
+Download the CSV template from the editor. Required columns are `name` and `category`. Optional columns are `description`, `available`, `image_url`, `image_filename`, `category_order`, `sort_order`, and `recipe`. The `recipe` column contains a JSON list of ingredient objects with `name` and optional `ml` values; the template includes an example.
 
 For many local photos, upload a ZIP like this:
 

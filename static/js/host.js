@@ -8,6 +8,63 @@ const categoryRemoveDialog = document.querySelector("#category-remove-dialog");
 const categoryRemoveForm = document.querySelector("#category-remove-form");
 const bulkDialog = document.querySelector("#bulk-dialog");
 const bulkImportForm = document.querySelector("#bulk-import-form");
+const recipeList = document.querySelector("#recipe-list");
+const addRecipeIngredientButton = document.querySelector("#add-recipe-ingredient");
+
+function updateRecipeAddButton() {
+  addRecipeIngredientButton.disabled = recipeList.children.length >= 20;
+}
+
+function addRecipeRow(ingredient = { name: "", ml: "" }) {
+  const row = document.createElement("div");
+  row.className = "recipe-row";
+
+  const nameLabel = document.createElement("label");
+  const nameText = document.createElement("span");
+  nameText.textContent = "Ingredient";
+  const nameInput = document.createElement("input");
+  nameInput.name = "recipe_name";
+  nameInput.value = ingredient.name || "";
+  nameInput.maxLength = 80;
+  nameInput.autocomplete = "off";
+  nameInput.placeholder = "e.g. Vodka or ice";
+  nameLabel.append(nameText, nameInput);
+
+  const amountLabel = document.createElement("label");
+  amountLabel.className = "recipe-amount";
+  const amountText = document.createElement("span");
+  amountText.textContent = "Amount (ml)";
+  const amountInput = document.createElement("input");
+  amountInput.name = "recipe_ml";
+  amountInput.type = "number";
+  amountInput.inputMode = "decimal";
+  amountInput.min = "0.01";
+  amountInput.max = "10000";
+  amountInput.step = "0.01";
+  amountInput.value = ingredient.ml || "";
+  amountInput.placeholder = "Optional";
+  amountLabel.append(amountText, amountInput);
+
+  const removeButton = document.createElement("button");
+  removeButton.type = "button";
+  removeButton.className = "recipe-remove-button";
+  removeButton.textContent = "Remove";
+  removeButton.setAttribute("aria-label", `Remove ${ingredient.name || "ingredient"}`);
+  removeButton.addEventListener("click", () => {
+    row.remove();
+    if (!recipeList.children.length) addRecipeRow();
+    updateRecipeAddButton();
+  });
+
+  row.append(nameLabel, amountLabel, removeButton);
+  recipeList.append(row);
+  updateRecipeAddButton();
+}
+
+function renderRecipe(recipe = []) {
+  recipeList.replaceChildren();
+  (recipe.length ? recipe : [{ name: "", ml: "" }]).forEach(addRecipeRow);
+}
 
 function openItemDialog(item = null) {
   const categorySelect = document.querySelector("#item-category");
@@ -19,12 +76,18 @@ function openItemDialog(item = null) {
   document.querySelector("#item-available").value = item ? String(item.available) : "1";
   document.querySelector("#existing-image").value = item?.image || "";
   document.querySelector("#image-url").value = item?.image?.startsWith("http") ? item.image : "";
+  renderRecipe(item?.recipe || []);
   itemDialog.showModal();
   document.querySelector("#item-name").focus();
 }
 
 document.querySelectorAll(".js-add-item").forEach((button) => {
   button.addEventListener("click", () => openItemDialog());
+});
+
+addRecipeIngredientButton.addEventListener("click", () => {
+  addRecipeRow();
+  recipeList.lastElementChild.querySelector('input[name="recipe_name"]').focus();
 });
 
 function openCategoryDialog() {
