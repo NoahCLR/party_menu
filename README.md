@@ -54,7 +54,9 @@ party-menu.zip
 
 Reference those files as `images/negroni.jpg` and `images/cheese-board.png` in the CSV's `image_filename` column.
 
-Choose **Add to current menu** for normal bulk imports. Choose **Replace entire menu** to delete the current menu and restore the uploaded archive as the complete menu state.
+Choose **Add to current menu** for normal bulk imports. Missing categories are created automatically, imported items follow the requested CSV order within each category, and bundled images are resized and converted to WebP. A row that references a missing or invalid bundled image is skipped.
+
+Choose **Replace entire menu** to delete the current menu and restore the uploaded archive as the complete menu state.
 
 Use **Full export** in the host editor before large changes. The downloaded ZIP contains `menu.csv`, `categories.csv`, `manifest.json`, and all local item images. It can be uploaded unchanged with **Replace entire menu**, including empty categories and hidden `Unassigned` items.
 

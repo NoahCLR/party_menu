@@ -1253,6 +1253,129 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertEqual(item["image_focus_x"], 25)
         self.assertEqual(item["image_focus_y"], 75)
 
+    def test_bulk_zip_import_creates_categories_and_optimizes_images(self):
+        self.login()
+        csv_content = io.StringIO()
+        writer = csv.DictWriter(
+            csv_content,
+            fieldnames=(
+                "name",
+                "description",
+                "category",
+                "available",
+                "image_filename",
+                "image_focus_x",
+                "image_focus_y",
+                "category_order",
+                "sort_order",
+                "recipe",
+            ),
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "name": "Brownie",
+                "description": "Chocolate brownie",
+                "category": "Desserts",
+                "available": "yes",
+                "image_filename": "images/brownie.png",
+                "image_focus_x": "20",
+                "image_focus_y": "80",
+                "category_order": "1",
+                "sort_order": "2",
+                "recipe": "[]",
+            }
+        )
+        writer.writerow(
+            {
+                "name": "Tiramisu",
+                "description": "Coffee dessert",
+                "category": "Desserts",
+                "available": "yes",
+                "category_order": "1",
+                "sort_order": "1",
+                "recipe": "[]",
+            }
+        )
+        writer.writerow(
+            {
+                "name": "Missing photo",
+                "category": "Late Snacks",
+                "available": "yes",
+                "image_filename": "images/missing.png",
+                "category_order": "2",
+                "sort_order": "1",
+                "recipe": "[]",
+            }
+        )
+        writer.writerow(
+            {
+                "name": "Corrupt photo",
+                "category": "Late Snacks",
+                "available": "yes",
+                "image_filename": "images/corrupt.png",
+                "category_order": "2",
+                "sort_order": "2",
+                "recipe": "[]",
+            }
+        )
+
+        archive_payload = io.BytesIO()
+        with zipfile.ZipFile(archive_payload, "w") as archive:
+            archive.writestr("menu.csv", csv_content.getvalue())
+            archive.writestr(
+                "images/brownie.png",
+                self.image_bytes(size=(2400, 1200), color=(80, 40, 20)),
+            )
+            archive.writestr("images/corrupt.png", b"not an image")
+        archive_payload.seek(0)
+
+        token = self.token_from("/host")
+        response = self.client.post(
+            "/host/bulk-import",
+            data={
+                "csrf_token": token,
+                "bulk_file": (archive_payload, "desserts.zip"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        self.assertIn(b"Imported 2 item(s). Skipped 2 invalid row(s).", response.data)
+
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            dessert_items = db.execute(
+                """
+                SELECT name, image, image_focus_x, image_focus_y
+                FROM menu_items WHERE category = 'Desserts'
+                ORDER BY sort_order, id
+                """
+            ).fetchall()
+            categories = [
+                row["name"]
+                for row in db.execute(
+                    "SELECT name FROM menu_categories ORDER BY sort_order, id"
+                ).fetchall()
+            ]
+
+        self.assertEqual(
+            [item["name"] for item in dessert_items], ["Tiramisu", "Brownie"]
+        )
+        self.assertEqual(categories[-1], "Desserts")
+        self.assertNotIn("Late Snacks", categories)
+        brownie = dessert_items[1]
+        self.assertEqual(brownie["image_focus_x"], 20)
+        self.assertEqual(brownie["image_focus_y"], 80)
+        self.assertTrue(brownie["image"].endswith(".webp"))
+        with Image.open(
+            Path(self.app.config["UPLOAD_DIR"]) / Path(brownie["image"]).name
+        ) as optimized:
+            self.assertEqual(optimized.format, "WEBP")
+            self.assertEqual(optimized.size, (1600, 800))
+        self.assertEqual(len(list(Path(self.app.config["UPLOAD_DIR"]).iterdir())), 1)
+
     def test_host_can_export_and_restore_the_complete_menu(self):
         self.login()
         custom_image = Path(self.app.config["UPLOAD_DIR"]) / "rollback-photo.jpg"
@@ -1335,8 +1458,13 @@ class MenuAppTestCase(unittest.TestCase):
             menu_rows = list(
                 csv.DictReader(io.StringIO(archive.read("menu.csv").decode()))
             )
+            espresso = next(
+                row for row in menu_rows if row["name"] == "Espresso Martini"
+            )
             whiskey = next(row for row in menu_rows if row["name"] == "Whiskey Sour")
             fanta = next(row for row in menu_rows if row["name"] == "Fanta")
+            self.assertTrue(espresso["image_filename"].startswith("images/"))
+            self.assertIn(espresso["image_filename"], archive_names)
             self.assertEqual(whiskey["available"], "no")
             self.assertEqual(whiskey["sort_order"], "1")
             self.assertEqual(whiskey["image_focus_x"], "30.0")

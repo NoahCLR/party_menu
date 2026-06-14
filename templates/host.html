@@ -290,7 +290,7 @@
         <div><span class="section-number">05</span><h2>Bulk import</h2></div>
         <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
       </div>
-      <p class="dialog-intro">Upload a CSV with image URLs, or a ZIP containing <code>menu.csv</code> and an <code>images/</code> folder. Full exports can be restored here.</p>
+      <p class="dialog-intro">Upload a CSV with image URLs, or a ZIP containing <code>menu.csv</code> and an <code>images/</code> folder. Bundled images are resized and converted to WebP. Full exports can be restored here.</p>
       <label class="drop-zone">
         <span>Drop a CSV or ZIP here</span>
         <small>or tap to browse · maximum 50 MB</small>
@@ -299,6 +299,7 @@
       <div class="bulk-help">
         <p>Required columns: <code>name</code>, <code>category</code>.</p>
         <p>Optional: <code>description</code>, <code>available</code>, <code>image_url</code>, <code>image_filename</code>, <code>image_focus_x</code>, <code>image_focus_y</code>, <code>category_order</code>, <code>sort_order</code>, <code>recipe</code>.</p>
+        <p>Add mode creates missing categories and appends items in the CSV's requested order. Missing or invalid bundled images skip that item.</p>
         <p><code>recipe</code> contains JSON ingredient rows; the downloaded template includes an example.</p>
       </div>
       <fieldset class="import-mode">
@@ -309,7 +310,7 @@
         </label>
         <label class="import-mode-danger">
           <input type="radio" name="import_mode" value="replace">
-          <span><strong>Replace entire menu</strong><small>Delete the current menu and restore categories, items, order, availability, and images from this file.</small></span>
+          <span><strong>Replace entire menu</strong><small>Restore categories, items, order, availability, recipes, images, and crop focus from this file.</small></span>
         </label>
       </fieldset>
       <div class="dialog-actions">

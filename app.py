@@ -1848,53 +1848,149 @@ def append_bulk_items(
     csv_payload: bytes, image_files: dict[str, tuple[str, bytes]]
 ) -> tuple[int, int]:
     rows = read_menu_rows(csv_payload)
-
     db = get_db()
-    next_order = db.execute("SELECT COALESCE(MAX(sort_order), 0) FROM menu_items").fetchone()[0]
-    imported = 0
+    prepared_items = []
+    saved_images = []
     skipped = 0
-    for row in rows:
-        name = " ".join(row.get("name", "").split())
-        category = canonical_category(row.get("category", ""))
-        if not name or not category:
-            skipped += 1
-            continue
-        try:
-            recipe = recipe_json(parse_recipe_json(row.get("recipe")))
-        except ValueError:
-            skipped += 1
-            continue
-        image_focus_x = parse_focus(row.get("image_focus_x"))
-        image_focus_y = parse_focus(row.get("image_focus_y"))
-        image = clean_image_reference(row.get("image_url"))
-        image_filename = row.get("image_filename", "").lstrip("./")
-        if image_filename:
-            match = image_files.get(image_filename.casefold()) or image_files.get(PurePosixPath(image_filename).name.casefold())
-            if match:
-                image = save_image_bytes(match[0], match[1])
-        next_order += 1
-        db.execute(
-            """
-            INSERT INTO menu_items
-                (name, description, category, image, available, sort_order, recipe,
-                 image_focus_x, image_focus_y)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                name,
-                row.get("description", ""),
-                category,
-                image,
-                parse_available(row.get("available")),
-                next_order,
-                recipe,
-                image_focus_x,
-                image_focus_y,
-            ),
-        )
-        imported += 1
-    db.commit()
-    return imported, skipped
+
+    try:
+        for row_number, row in enumerate(rows, start=1):
+            name = " ".join(row.get("name", "").split())
+            raw_category = clean_category_name(row.get("category", ""))
+            if not name or not raw_category:
+                skipped += 1
+                continue
+
+            if raw_category.casefold() == UNASSIGNED_CATEGORY.casefold():
+                category = UNASSIGNED_CATEGORY
+            else:
+                category = canonical_category(raw_category)
+                if category is None:
+                    if category_name_error(raw_category):
+                        skipped += 1
+                        continue
+                    category = raw_category
+
+            try:
+                recipe = recipe_json(parse_recipe_json(row.get("recipe")))
+            except ValueError:
+                skipped += 1
+                continue
+
+            image = clean_image_reference(row.get("image_url"))
+            image_filename = row.get("image_filename", "").lstrip("./")
+            if image_filename:
+                match = image_files.get(image_filename.casefold()) or image_files.get(
+                    PurePosixPath(image_filename).name.casefold()
+                )
+                if match is None:
+                    skipped += 1
+                    continue
+                try:
+                    image = save_image_bytes(*match)
+                except ValueError:
+                    skipped += 1
+                    continue
+                saved_images.append(image)
+
+            try:
+                category_order = int(row.get("category_order") or row_number)
+            except ValueError:
+                category_order = row_number
+            try:
+                sort_order = int(row.get("sort_order") or row_number)
+            except ValueError:
+                sort_order = row_number
+
+            prepared_items.append(
+                {
+                    "name": name,
+                    "description": row.get("description", ""),
+                    "category": category,
+                    "available": parse_available(row.get("available")),
+                    "recipe": recipe,
+                    "image_focus_x": parse_focus(row.get("image_focus_x")),
+                    "image_focus_y": parse_focus(row.get("image_focus_y")),
+                    "image": image,
+                    "category_order": category_order,
+                    "sort_order": sort_order,
+                    "row_number": row_number,
+                }
+            )
+
+        db.execute("BEGIN IMMEDIATE")
+        existing_categories = {
+            row["name"].casefold(): row["name"]
+            for row in db.execute("SELECT name FROM menu_categories").fetchall()
+        }
+        new_categories = {}
+        for item in prepared_items:
+            category = item["category"]
+            key = category.casefold()
+            if key == UNASSIGNED_CATEGORY.casefold() or key in existing_categories:
+                continue
+            current = new_categories.get(key)
+            if current is None or item["category_order"] < current[1]:
+                new_categories[key] = (category, item["category_order"])
+
+        next_category_order = db.execute(
+            "SELECT COALESCE(MAX(sort_order), 0) FROM menu_categories"
+        ).fetchone()[0]
+        for key, (category, _requested_order) in sorted(
+            new_categories.items(), key=lambda entry: (entry[1][1], entry[1][0].casefold())
+        ):
+            next_category_order += 1
+            db.execute(
+                "INSERT INTO menu_categories (name, sort_order) VALUES (?, ?)",
+                (category, next_category_order),
+            )
+            existing_categories[key] = category
+
+        items_by_category: dict[str, list[dict[str, object]]] = {}
+        for item in prepared_items:
+            key = item["category"].casefold()
+            if key != UNASSIGNED_CATEGORY.casefold():
+                item["category"] = existing_categories[key]
+            items_by_category.setdefault(key, []).append(item)
+
+        for category_items in items_by_category.values():
+            category_items.sort(
+                key=lambda item: (item["sort_order"], item["row_number"])
+            )
+            category = category_items[0]["category"]
+            next_item_order = db.execute(
+                "SELECT COALESCE(MAX(sort_order), 0) FROM menu_items WHERE category = ?",
+                (category,),
+            ).fetchone()[0]
+            for item in category_items:
+                next_item_order += 1
+                db.execute(
+                    """
+                    INSERT INTO menu_items
+                        (name, description, category, image, available, sort_order, recipe,
+                         image_focus_x, image_focus_y)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item["name"],
+                        item["description"],
+                        item["category"],
+                        item["image"],
+                        item["available"],
+                        next_item_order,
+                        item["recipe"],
+                        item["image_focus_x"],
+                        item["image_focus_y"],
+                    ),
+                )
+        db.commit()
+    except Exception:
+        db.rollback()
+        for image in saved_images:
+            delete_uploaded_image(image)
+        raise
+
+    return len(prepared_items), skipped
 
 
 def replace_menu_from_archive(
