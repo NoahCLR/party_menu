@@ -73,6 +73,7 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(b'aria-label="Clear search"', response.data)
         self.assertRegex(response.data, rb'/static/js/menu\.js\?v=\d+')
         self.assertRegex(response.data, rb'/static/js/basket-store\.js\?v=\d+')
+        self.assertRegex(response.data, rb'/static/js/flashes\.js\?v=\d+')
         self.assertEqual(response.data.count(b'data-focus-x="50.0"'), 25)
         image_paths = re.findall(rb'<img src="([^"]+)"', response.data)
         self.assertEqual(len(image_paths), 25)
@@ -542,6 +543,7 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(".menu-item:not(.no-image) {", stylesheet)
         self.assertIn("height: clamp(250px, 55vw, 300px);", stylesheet)
         self.assertIn(".image-focus-preview {", stylesheet)
+        self.assertIn(".public-flash.is-dismissing,", stylesheet)
 
     def test_host_can_add_and_disable_item(self):
         self.login()
