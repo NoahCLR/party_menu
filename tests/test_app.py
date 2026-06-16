@@ -107,7 +107,7 @@ class MenuAppTestCase(unittest.TestCase):
         payload = parse_qs(pushover_request.data.decode())
         self.assertEqual(payload["token"], ["application-token"])
         self.assertEqual(payload["user"], ["user-key"])
-        self.assertEqual(payload["title"], ["Order from Noah"])
+        self.assertEqual(payload["title"], ["Order for Noah"])
         self.assertEqual(
             payload["message"],
             [
@@ -152,11 +152,11 @@ class MenuAppTestCase(unittest.TestCase):
             )
 
         payload = parse_qs(mocked.call_args.args[0].data.decode())
-        self.assertEqual(payload["title"], ["Order from Noah for Noah, Mila"])
+        self.assertEqual(payload["title"], ["Order for Noah, Mila"])
         self.assertEqual(
             payload["message"],
             [
-                "For: Noah, Mila\nItems:\n2x Moscow Mule for Noah, Mila"
+                "Items:\n2x Moscow Mule for Noah, Mila"
                 "\n1x Gin & Tonic for Mila\nNote: Bring together"
                 "\n\nRecipes:\nMoscow Mule\n- 50 ml Vodka\n- 120 ml Ginger beer"
                 "\n- Lime wedge\n\nGin & Tonic\n- 50 ml Gin\n- 150 ml Tonic"
@@ -488,6 +488,8 @@ class MenuAppTestCase(unittest.TestCase):
                 },
             )
         self.assertEqual(response.status_code, 302)
+        flash_page = self.client.get(response.headers["Location"])
+        self.assertIn(b"Basket order sent for Noah, Mila: 2 items.", flash_page.data)
         sent_items, sent_guest_name, sent_note = send_order.call_args.args
         self.assertEqual(sent_guest_name, "Noah")
         self.assertEqual(sent_note, "For the table")

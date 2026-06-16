@@ -1050,6 +1050,11 @@ def format_order_title(guest_name: str, recipient_names: list[str]) -> str:
     return f"Order from {guest_name} for {recipient_summary}"
 
 
+def format_pushover_order_title(recipient_names: list[str]) -> str:
+    recipient_summary = format_guest_name_list(recipient_names)
+    return f"Order for {recipient_summary}" if recipient_summary else "New order"
+
+
 def format_basket_item_line(item: dict, guest_name: str) -> str:
     recipient_summary = format_guest_name_list(
         basket_recipient_names([item], guest_name)
@@ -1083,12 +1088,11 @@ def send_pushover_order(
     recipe: list[dict[str, str]],
 ) -> None:
     message = format_single_order_message(item_name, category, note, recipe)
-    send_pushover_message(f"Order from {guest_name}", message)
+    send_pushover_message(format_pushover_order_title([guest_name]), message)
 
 
 def format_basket_message(items: list[dict], guest_name: str, note: str) -> str:
-    recipient_names = basket_recipient_names(items, guest_name)
-    lines = [f"For: {format_guest_name_list(recipient_names)}", "Items:"]
+    lines = ["Items:"]
     lines.extend(format_basket_item_line(item, guest_name) for item in items)
     if note:
         lines.append(f"Note: {note}")
@@ -1104,7 +1108,7 @@ def send_pushover_basket_order(
 ) -> None:
     recipient_names = basket_recipient_names(items, guest_name)
     send_pushover_message(
-        format_order_title(guest_name, recipient_names),
+        format_pushover_order_title(recipient_names),
         format_basket_message(items, guest_name, note),
     )
 
@@ -1832,16 +1836,19 @@ def register_routes(app: Flask) -> None:
             current_app.logger.warning("Could not send basket order: %s", error)
         session["last_order_at"] = now
         item_count = sum(item["quantity"] for item in items)
+        recipient_summary = format_guest_name_list(
+            basket_recipient_names(items, guest_name)
+        )
         if notification_failed:
             flash(
-                f"Basket order received for {guest_name}: {item_count} "
+                f"Basket order received for {recipient_summary}: {item_count} "
                 f"item{'s' if item_count != 1 else ''}. The host notification "
                 "failed, so ask the host to check the queue.",
                 "success",
             )
         else:
             flash(
-                f"Basket order sent for {guest_name}: {item_count} "
+                f"Basket order sent for {recipient_summary}: {item_count} "
                 f"item{'s' if item_count != 1 else ''}.",
                 "success",
             )
