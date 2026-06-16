@@ -4,6 +4,8 @@ const basketItemsInput = document.querySelector("#basket-items-input");
 const basketEmpty = document.querySelector("#basket-empty");
 const basketTotal = document.querySelector("#basket-total");
 const basketSubmit = document.querySelector("#basket-submit");
+const basketAssignmentTools = document.querySelector("#basket-assignment-tools");
+const basketUseBuyerButton = document.querySelector("#basket-use-buyer");
 const guestNameInput = document.querySelector("#guest_name");
 const catalogElement = document.querySelector("#basket-catalog");
 const catalog = JSON.parse(catalogElement?.textContent || "[]");
@@ -29,6 +31,18 @@ function currentGuestName() {
   return trimmedName(guestNameInput.value);
 }
 
+function updateRecipientDraft(key, value, input = null) {
+  recipientDrafts.set(key, value);
+  if (input) {
+    input.value = value;
+    input.dataset.defaultRecipient =
+      trimmedName(value) === "" || trimmedName(value) === currentGuestName()
+        ? "true"
+        : "false";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+}
+
 function captureRecipientInputs() {
   basketItemsElement.querySelectorAll(".basket-recipient-input").forEach((input) => {
     recipientDrafts.set(input.dataset.assignmentKey, input.value);
@@ -52,7 +66,7 @@ function recipientInput(id, index, itemName) {
   label.setAttribute("for", `recipient-${id}-${index}`);
 
   const labelText = document.createElement("span");
-  labelText.textContent = `For ${itemName} #${index + 1}`;
+  labelText.textContent = `#${index + 1}`;
 
   const input = document.createElement("input");
   const draft = recipientDrafts.get(key);
@@ -79,6 +93,26 @@ function recipientInput(id, index, itemName) {
 
   label.append(labelText, input);
   return label;
+}
+
+function copyFirstRecipientToItem(id, quantity) {
+  captureRecipientInputs();
+  const firstKey = assignmentKey(id, 0);
+  const source = trimmedName(recipientDrafts.get(firstKey)) || currentGuestName();
+  for (let index = 0; index < quantity; index += 1) {
+    const key = assignmentKey(id, index);
+    const input = Array.from(basketItemsElement.querySelectorAll(".basket-recipient-input"))
+      .find((recipientInputElement) => recipientInputElement.dataset.assignmentKey === key);
+    updateRecipientDraft(key, source, input);
+  }
+}
+
+function useBuyerForAllRecipients() {
+  const buyerName = currentGuestName();
+  captureRecipientInputs();
+  basketItemsElement.querySelectorAll(".basket-recipient-input").forEach((input) => {
+    updateRecipientDraft(input.dataset.assignmentKey, buyerName, input);
+  });
 }
 
 function renderBasket() {
@@ -143,6 +177,20 @@ function renderBasket() {
 
     const recipientsWrap = document.createElement("div");
     recipientsWrap.className = "basket-recipients";
+    const recipientHeading = document.createElement("div");
+    recipientHeading.className = "basket-recipient-heading";
+    const recipientTitle = document.createElement("span");
+    recipientTitle.textContent = quantity === 1 ? `For ${item.name}` : `For each ${item.name}`;
+    recipientHeading.append(recipientTitle);
+    if (quantity > 1) {
+      const copyFirst = document.createElement("button");
+      copyFirst.type = "button";
+      copyFirst.dataset.copyItemRecipients = id;
+      copyFirst.dataset.quantity = String(quantity);
+      copyFirst.textContent = "Copy first to all";
+      recipientHeading.append(copyFirst);
+    }
+    recipientsWrap.append(recipientHeading);
     for (let index = 0; index < quantity; index += 1) {
       const key = assignmentKey(id, index);
       recipientsWrap.append(recipientInput(id, index, item.name));
@@ -156,6 +204,7 @@ function renderBasket() {
   basketItemsInput.value = JSON.stringify(submittedItems);
   basketEmpty.hidden = totalQuantity > 0;
   basketSubmit.disabled = totalQuantity === 0;
+  basketAssignmentTools.hidden = totalQuantity <= 1;
   basketTotal.textContent = totalQuantity
     ? `${totalQuantity} item${totalQuantity === 1 ? "" : "s"}`
     : "";
@@ -180,6 +229,16 @@ guestNameInput.addEventListener("input", () => {
     }
   });
   lastGuestName = nextGuestName;
+});
+
+basketUseBuyerButton.addEventListener("click", () => {
+  useBuyerForAllRecipients();
+});
+
+basketItemsElement.addEventListener("click", (event) => {
+  const copyButton = event.target.closest("[data-copy-item-recipients]");
+  if (!copyButton) return;
+  copyFirstRecipientToItem(copyButton.dataset.copyItemRecipients, Number(copyButton.dataset.quantity || 0));
 });
 
 window.addEventListener("storage", renderBasket);

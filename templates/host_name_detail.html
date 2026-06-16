@@ -110,9 +110,9 @@
               </div>
               <div class="guest-history-meta">
                 <span>{{ "%.1f"|format(item['alcohol_ml']) }} ml alcohol</span>
-                <form method="post" action="{{ url_for('remove_guest_drink', name_id=guest['id'], item_id=item['id']) }}">
+                <form method="post" action="{{ url_for('remove_guest_drink', name_id=guest['id'], item_id=item['id']) }}" data-confirm-message="Remove one {{ item['name'] }} from {{ guest['name'] }}'s history?">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button class="icon-button" type="submit">Remove one</button>
+                  <button class="icon-button danger-link" type="submit">Remove one</button>
                 </form>
               </div>
             </article>
@@ -123,4 +123,5 @@
       {% endif %}
     </section>
   </main>
+  <script src="{{ static_asset('js/confirm-actions.js') }}" defer></script>
 {% endblock %}

@@ -23,32 +23,47 @@
     {% endwith %}
 
     {% if guest_names %}
+      <section class="host-search guest-name-search" aria-label="Search guest names">
+        <label for="guest-name-search-input">Search names</label>
+        <div class="host-search-control">
+          <input id="guest-name-search-input" type="search" placeholder="Search guest names" autocomplete="off" spellcheck="false">
+          <button id="guest-name-search-clear" type="button" aria-label="Clear guest name search" hidden><span aria-hidden="true">×</span></button>
+        </div>
+        <p id="guest-name-search-status" aria-live="polite">{{ guest_names|length }} name{% if guest_names|length != 1 %}s{% endif %}</p>
+        <div class="guest-name-sort-controls" role="group" aria-label="Sort guest names">
+          <button class="active" type="button" data-guest-sort="name">Name</button>
+          <button type="button" data-guest-sort="orders">Orders</button>
+          <button type="button" data-guest-sort="items">Items</button>
+          <button type="button" data-guest-sort="alcohol">Alcohol</button>
+        </div>
+      </section>
       <div class="table-wrap">
         <table class="menu-table guest-name-table">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Orders</th>
-              <th>Items</th>
-              <th>Alcohol ml</th>
+              <th><button class="table-sort-button active" type="button" data-guest-sort="name">Name</button></th>
+              <th><button class="table-sort-button" type="button" data-guest-sort="orders">Orders</button></th>
+              <th><button class="table-sort-button" type="button" data-guest-sort="items">Items</button></th>
+              <th><button class="table-sort-button" type="button" data-guest-sort="alcohol">Alcohol ml</button></th>
               <th>Action</th>
             </tr>
           </thead>
           <tbody>
             {% for guest in guest_names %}
-              <tr>
+              <tr data-guest-row data-name="{{ guest['name'] }}" data-orders="{{ guest['orders'] }}" data-items="{{ guest['items'] }}" data-alcohol="{{ "%.1f"|format(guest['alcohol_ml']) }}">
                 <td data-label="Name"><a class="guest-name-link" href="{{ url_for('host_name_detail', name_id=guest['id']) }}">{{ guest['name'] }}</a></td>
                 <td data-label="Orders">{{ guest['orders'] }}</td>
                 <td data-label="Items">{{ guest['items'] }}</td>
                 <td data-label="Alcohol ml">{{ "%.1f"|format(guest['alcohol_ml']) }}</td>
                 <td data-label="Action">
-                  <form method="post" action="{{ url_for('delete_guest_name', name_id=guest['id']) }}">
+                  <form method="post" action="{{ url_for('delete_guest_name', name_id=guest['id']) }}" data-confirm-message="Delete {{ guest['name'] }}? Drinks assigned to this name will become unassigned.">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button class="icon-button" type="submit">Delete name</button>
+                    <button class="icon-button danger-link" type="submit">Delete name</button>
                   </form>
                 </td>
               </tr>
             {% endfor %}
+            <tr id="guest-name-search-empty" hidden><td class="empty-table" colspan="5">No guest names match that search.</td></tr>
           </tbody>
         </table>
       </div>
@@ -56,4 +71,6 @@
       <p class="dashboard-empty">No guest names yet. Names appear after orders are placed.</p>
     {% endif %}
   </main>
+  <script src="{{ static_asset('js/confirm-actions.js') }}" defer></script>
+  <script src="{{ static_asset('js/host-names.js') }}" defer></script>
 {% endblock %}

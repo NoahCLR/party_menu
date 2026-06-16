@@ -76,6 +76,8 @@ function orderCard(order) {
   const orderId = String(order.id);
   const isPendingDelete = pendingDeleteOrderId === orderId;
   const recipientSummary = order.recipient_summary || order.guest_name;
+  const completedItems = order.items.filter((item) => item.completed).length;
+  const progressLabel = `${completedItems}/${order.items.length} done`;
   const ordererDetail = recipientSummary
     && recipientSummary.toLocaleLowerCase() !== String(order.guest_name || "").toLocaleLowerCase()
     ? `From ${escapeHtml(order.guest_name)} · `
@@ -84,7 +86,7 @@ function orderCard(order) {
     ? `<button class="button button-dark" type="button" data-complete-order="${order.id}">Mark complete</button>`
     : `<span class="status-chip">Completed ${formatSubmittedAt(order.completed_at)}</span>`;
   const deleteButton = `
-    <button class="button button-outline" type="button" data-delete-order="${order.id}" data-confirm-delete="${isPendingDelete}">
+    <button class="button button-outline button-danger" type="button" data-delete-order="${order.id}" data-confirm-delete="${isPendingDelete}">
       ${isPendingDelete ? "Confirm delete" : "Delete"}
     </button>
   `;
@@ -103,6 +105,7 @@ function orderCard(order) {
         </div>
         <div class="order-card-actions">
           <span class="status-chip">${escapeHtml(order.status)}</span>
+          <span class="status-chip status-progress">${escapeHtml(progressLabel)}</span>
           ${completeButton}
           ${deleteButton}
         </div>
@@ -212,8 +215,8 @@ clearButtons.forEach((button) => {
   button.addEventListener("click", async () => {
     const action = button.dataset.clearOrders;
     const message = action === "all"
-      ? "Clear the entire order history?"
-      : "Clear completed orders?";
+      ? "Clear the entire order history? This removes active and completed orders."
+      : "Clear completed orders from the history?";
     if (!window.confirm(message)) return;
     try {
       await postQueueAction("/host/orders/clear", `action=${encodeURIComponent(action)}`);

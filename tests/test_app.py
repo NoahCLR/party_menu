@@ -71,6 +71,9 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(b'id="menu-search-input"', response.data)
         self.assertIn(b"Search names and descriptions", response.data)
         self.assertIn(b'aria-label="Clear search"', response.data)
+        self.assertIn(b"Missing something or need a custom pour? Ask the host.", response.data)
+        self.assertNotIn(b"flip you off", response.data)
+        self.assertRegex(response.data, rb'/static/favicon\.svg\?v=\d+')
         self.assertRegex(response.data, rb'/static/js/menu\.js\?v=\d+')
         self.assertRegex(response.data, rb'/static/js/basket-store\.js\?v=\d+')
         self.assertRegex(response.data, rb'/static/js/flashes\.js\?v=\d+')
@@ -517,6 +520,8 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(b"guest-names-data", basket_page.data)
         self.assertIn(b"Mila", basket_page.data)
         self.assertIn(b"name-suggestions.js", basket_page.data)
+        self.assertIn(b'id="basket-assignment-tools"', basket_page.data)
+        self.assertIn(b"Use your name for all", basket_page.data)
 
         self.login()
         queue_json = self.client.get("/host/orders.json").json
@@ -539,6 +544,10 @@ class MenuAppTestCase(unittest.TestCase):
 
         names_page = self.client.get("/host/names")
         self.assertIn(b"Guest names", names_page.data)
+        self.assertIn(b'id="guest-name-search-input"', names_page.data)
+        self.assertIn(b"host-names.js", names_page.data)
+        self.assertIn(b"confirm-actions.js", names_page.data)
+        self.assertIn(b"data-confirm-message", names_page.data)
         self.assertIn(b"Mila", names_page.data)
         self.assertNotIn(b"built-in method", names_page.data)
         delete_match = re.search(rb'/host/names/(\d+)/delete', names_page.data)
@@ -615,6 +624,8 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(b"Moscow Mule", detail.data)
         self.assertIn(b"Add drink", detail.data)
         self.assertIn(b"By others", detail.data)
+        self.assertIn(b"confirm-actions.js", detail.data)
+        self.assertIn(b"data-confirm-message", detail.data)
 
         add_token = self.token_from(detail_path)
         add_response = self.client.post(
@@ -1096,6 +1107,7 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertRegex(response.text, r'/static/js/host\.js\?v=\d+')
         self.assertIn(b'id="host-search-input"', response.data)
         self.assertIn(b"Search name, description, category, or recipe", response.data)
+        self.assertIn(b'class="mobile-editor-filters"', response.data)
         self.assertIn(b'id="single-serve-recipe"', response.data)
         self.assertIn(b"Single serving", response.data)
         self.assertIn(b'class="host-tab active" aria-current="page" href="/host"', response.data)
@@ -1105,10 +1117,12 @@ class MenuAppTestCase(unittest.TestCase):
 
         stats_response = self.client.get("/host/stats")
         self.assertIn(b"Pure alcohol ml", stats_response.data)
+        self.assertIn(b"Pace is drinks per hour over the last 4 hours.", stats_response.data)
         self.assertIn(b'data-timeline-range="4"', stats_response.data)
         self.assertIn(b'class="host-tab active" aria-current="page" href="/host/stats"', stats_response.data)
         orders_response = self.client.get("/host/orders")
         self.assertIn(b"Alcohol ml", orders_response.data)
+        self.assertIn(b"button-danger", orders_response.data)
 
         stylesheet_response = self.client.get("/static/styles.css")
         stylesheet = stylesheet_response.text
@@ -1134,6 +1148,11 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(".category-pie", stylesheet)
         self.assertIn(".guest-line-detail", stylesheet)
         self.assertIn(".recipe-row-controls", stylesheet)
+        self.assertIn(".mobile-editor-filters", stylesheet)
+        self.assertIn(".basket-assignment-tools", stylesheet)
+        self.assertIn(".table-sort-button", stylesheet)
+        self.assertIn("[data-guest-row][hidden]", stylesheet)
+        self.assertIn(".button-danger", stylesheet)
 
         name_suggestions_response = self.client.get("/static/js/name-suggestions.js")
         name_suggestions = name_suggestions_response.text
@@ -1161,6 +1180,19 @@ class MenuAppTestCase(unittest.TestCase):
         host_orders_response.close()
         self.assertIn("total_alcohol_ml", host_orders)
         self.assertIn("ml pure alcohol", host_orders)
+        self.assertIn("status-progress", host_orders)
+
+        basket_js_response = self.client.get("/static/js/basket.js")
+        basket_js = basket_js_response.text
+        basket_js_response.close()
+        self.assertIn("basket-use-buyer", basket_js)
+        self.assertIn("copyItemRecipients", basket_js)
+
+        host_names_response = self.client.get("/static/js/host-names.js")
+        host_names = host_names_response.text
+        host_names_response.close()
+        self.assertIn("guest-name-search-input", host_names)
+        self.assertIn("sortDirection", host_names)
 
     def test_host_can_add_and_disable_item(self):
         self.login()
