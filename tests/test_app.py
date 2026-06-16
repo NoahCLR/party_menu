@@ -952,6 +952,40 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertEqual(clear.json["cleared"], 1)
         self.assertEqual(self.client.get("/host/stats.json").json["stats"]["summary"]["total_orders"], 0)
 
+    def test_hard_drink_single_serving_recipe_powers_stats(self):
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            vodka = db.execute(
+                "SELECT id, recipe FROM menu_items WHERE name = 'Vodka'"
+            ).fetchone()
+            self.assertEqual(
+                json.loads(vodka["recipe"]),
+                [{"name": "Vodka", "ml": "40", "abv": "40"}],
+            )
+            item_id = vodka["id"]
+
+        token = self.token_from(f"/order/item/{item_id}")
+        with patch("app.send_pushover_order"):
+            response = self.client.post(
+                f"/order/item/{item_id}",
+                data={"csrf_token": token, "guest_name": "Noah", "note": ""},
+                follow_redirects=True,
+            )
+        self.assertIn(b"Order sent for Noah: Vodka.", response.data)
+
+        self.login()
+        queue_json = self.client.get("/host/orders.json").json
+        self.assertAlmostEqual(queue_json["orders"][0]["total_alcohol_grams"], 12.62)
+        self.assertEqual(
+            queue_json["orders"][0]["items"][0]["recipe"],
+            [{"name": "Vodka", "ml": "40", "abv": "40"}],
+        )
+        stats_json = self.client.get("/host/stats.json").json["stats"]
+        self.assertAlmostEqual(stats_json["summary"]["standard_drinks"], 1.26)
+        self.assertAlmostEqual(stats_json["guests"][0]["standard_drinks"], 1.26)
+
 
     def test_static_assets_are_cache_busted(self):
         self.login()
@@ -960,6 +994,8 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertRegex(response.text, r'/static/js/host\.js\?v=\d+')
         self.assertIn(b'id="host-search-input"', response.data)
         self.assertIn(b"Search name, description, category, or recipe", response.data)
+        self.assertIn(b'id="single-serve-recipe"', response.data)
+        self.assertIn(b"Single serving", response.data)
         self.assertIn(b"data-host-row", response.data)
         self.assertIn(b'id="host-search-empty"', response.data)
 
@@ -978,12 +1014,19 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(".image-focus-preview {", stylesheet)
         self.assertIn(".public-flash.is-dismissing,", stylesheet)
         self.assertIn(".name-input-clear", stylesheet)
+        self.assertIn(".recipe-single-button", stylesheet)
 
         name_suggestions_response = self.client.get("/static/js/name-suggestions.js")
         name_suggestions = name_suggestions_response.text
         name_suggestions_response.close()
         self.assertIn("Clear name", name_suggestions)
         self.assertIn("name-input-wrap", name_suggestions)
+
+        host_js_response = self.client.get("/static/js/host.js")
+        host_js = host_js_response.text
+        host_js_response.close()
+        self.assertIn("single-serve-recipe", host_js)
+        self.assertIn("renderRecipe([{ name: itemName", host_js)
 
     def test_host_can_add_and_disable_item(self):
         self.login()
@@ -1032,6 +1075,7 @@ class MenuAppTestCase(unittest.TestCase):
                 "available": "1",
                 "recipe_name": ["Rum", "Lime juice", "Ice"],
                 "recipe_ml": ["50", "22.50", ""],
+                "recipe_abv": ["40", "", ""],
             },
             follow_redirects=True,
         )
@@ -1050,7 +1094,7 @@ class MenuAppTestCase(unittest.TestCase):
             self.assertEqual(
                 json.loads(row["recipe"]),
                 [
-                    {"name": "Rum", "ml": "50"},
+                    {"name": "Rum", "ml": "50", "abv": "40"},
                     {"name": "Lime juice", "ml": "22.5"},
                     {"name": "Ice", "ml": ""},
                 ],
@@ -1222,7 +1266,7 @@ class MenuAppTestCase(unittest.TestCase):
             self.assertIn("After Dinner", categories)
             self.assertEqual(port_recipe, "[]")
             self.assertEqual(tuple(port_focus), (50, 50))
-            self.assertEqual(version, "3")
+            self.assertEqual(version, "4")
 
     def test_image_migration_fills_blanks_without_overwriting_custom_images(self):
         with self.app.app_context():
@@ -1234,6 +1278,15 @@ class MenuAppTestCase(unittest.TestCase):
             )
             db.execute(
                 "UPDATE menu_items SET image = '/uploads/custom.jpg' WHERE name = 'Whiskey Sour'"
+            )
+            db.execute("UPDATE menu_items SET recipe = '[]' WHERE name = 'Vodka'")
+            db.execute(
+                "UPDATE menu_items SET recipe = ? WHERE name = 'Gin'",
+                (
+                    json.dumps(
+                        [{"name": "Gin", "ml": "50", "abv": "42"}]
+                    ),
+                ),
             )
             db.execute(
                 "UPDATE app_meta SET value = '2' WHERE key = 'catalog_version'"
@@ -1260,13 +1313,22 @@ class MenuAppTestCase(unittest.TestCase):
                     ("Espresso Martini", "Whiskey Sour"),
                 ).fetchall()
             }
+            recipes = {
+                row["name"]: json.loads(row["recipe"])
+                for row in db.execute(
+                    "SELECT name, recipe FROM menu_items WHERE name IN (?, ?)",
+                    ("Vodka", "Gin"),
+                ).fetchall()
+            }
             version = db.execute(
                 "SELECT value FROM app_meta WHERE key = 'catalog_version'"
             ).fetchone()[0]
 
         self.assertEqual(images["Espresso Martini"], "/static/seed/espresso-martini.jpg")
         self.assertEqual(images["Whiskey Sour"], "/uploads/custom.jpg")
-        self.assertEqual(version, "3")
+        self.assertEqual(recipes["Vodka"], [{"name": "Vodka", "ml": "40", "abv": "40"}])
+        self.assertEqual(recipes["Gin"], [{"name": "Gin", "ml": "50", "abv": "42"}])
+        self.assertEqual(version, "4")
 
     def test_host_can_reorder_items_within_a_category(self):
         self.login()

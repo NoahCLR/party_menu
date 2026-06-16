@@ -57,6 +57,9 @@ Each ingredient has a `name`, an optional `ml` value, and an optional `abv`
 percentage. The host stats dashboard uses `ml` and `abv` to estimate alcohol
 ordered.
 
+For neat spirits, wine, beer, or any item without separate ingredients, use one
+recipe row named after the item itself with its serving size and ABV.
+
 ```json
 [
   {"name": "Vodka", "ml": "40", "abv": "40"},

@@ -54,7 +54,7 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_IMAGE_DIMENSION = 1600
 MAX_IMAGE_PIXELS = 40_000_000
 WEBP_QUALITY = 84
-CATALOG_VERSION = "3"
+CATALOG_VERSION = "4"
 PUSHOVER_MESSAGES_URL = "https://api.pushover.net/1/messages.json"
 UNASSIGNED_CATEGORY = "Unassigned"
 UNASSIGNED_RECIPIENT = "Unassigned"
@@ -227,6 +227,13 @@ LEGACY_SEED_ITEMS = (
     ("Olives", "/static/seed/olives.jpg"),
     ("Crisps", "/static/seed/crisps.jpg"),
     ("Cheese Board", "/static/seed/cheese-board.jpg"),
+)
+
+SEED_SINGLE_SERVE_RECIPES = (
+    ("Vodka", "Hard Drinks", ({"name": "Vodka", "ml": "40", "abv": "40"},)),
+    ("Whiskey", "Hard Drinks", ({"name": "Whiskey", "ml": "40", "abv": "40"},)),
+    ("Rum", "Hard Drinks", ({"name": "Rum", "ml": "40", "abv": "40"},)),
+    ("Gin", "Hard Drinks", ({"name": "Gin", "ml": "40", "abv": "40"},)),
 )
 
 
@@ -549,6 +556,19 @@ def init_db() -> None:
             WHERE name = ? AND category = ? AND image = ''
             """,
             [(item[3], item[0], item[2]) for item in SEED_ITEMS],
+        )
+    if catalog_version < 4:
+        db.executemany(
+            """
+            UPDATE menu_items
+            SET recipe = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE name = ? AND category = ?
+                AND (recipe IS NULL OR TRIM(recipe) = '' OR TRIM(recipe) = '[]')
+            """,
+            [
+                (recipe_json(list(recipe)), name, category)
+                for name, category, recipe in SEED_SINGLE_SERVE_RECIPES
+            ],
         )
     db.execute(
         """
@@ -2686,7 +2706,7 @@ def register_routes(app: Flask) -> None:
                     [
                         {"name": "Vodka", "ml": "40"},
                         {"name": "Espresso", "ml": "30"},
-                        {"name": "Coffee liqueur", "ml": "20"},
+                        {"name": "Coffee liqueur", "ml": "20", "abv": "20"},
                         {"name": "Ice", "ml": ""},
                     ]
                 ),

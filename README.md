@@ -228,7 +228,7 @@ the complete order first. Recipes are never rendered on the public menu.
 Open `/host` and log in with `ADMIN_PASSWORD`.
 
 - Use **Add item** to create an item, upload its image, select the crop focus, and
-  add recipe ingredients.
+  add recipe ingredients or a single serving alcohol profile.
 - Use the item arrows to reorder items inside their category.
 - Toggle **Available / Out** without deleting the item.
 - Use **Manage categories** to add, rename, reorder, or remove sections.

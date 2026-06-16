@@ -170,10 +170,13 @@
         </label>
         <label class="full-field">Description<textarea name="description" id="item-description" rows="3" maxlength="500"></textarea></label>
         <fieldset class="recipe-editor full-field">
-          <legend>Recipe <span>Host only</span></legend>
-          <p>Add each ingredient separately. Add ABV for alcoholic liquids to power the host stats.</p>
+          <legend>Recipe & alcohol <span>Host only</span></legend>
+          <p>Add each ingredient separately, or use one serving row for neat spirits and bottled drinks.</p>
           <div id="recipe-list" class="recipe-list"></div>
-          <button class="button button-outline recipe-add-button" id="add-recipe-ingredient" type="button">+ Add ingredient</button>
+          <div class="recipe-actions">
+            <button class="button button-outline recipe-add-button" id="add-recipe-ingredient" type="button">+ Add ingredient</button>
+            <button class="button button-outline recipe-single-button" id="single-serve-recipe" type="button">Single serving</button>
+          </div>
         </fieldset>
         <label>Upload image<input name="image_file" id="image-file" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>
         <label>Image URL<input name="image_url" id="image-url" type="url" placeholder="https://..."></label>

@@ -10,6 +10,7 @@ const bulkDialog = document.querySelector("#bulk-dialog");
 const bulkImportForm = document.querySelector("#bulk-import-form");
 const recipeList = document.querySelector("#recipe-list");
 const addRecipeIngredientButton = document.querySelector("#add-recipe-ingredient");
+const singleServeRecipeButton = document.querySelector("#single-serve-recipe");
 const imageFileInput = document.querySelector("#image-file");
 const imageUrlInput = document.querySelector("#image-url");
 const existingImageInput = document.querySelector("#existing-image");
@@ -254,6 +255,17 @@ document.querySelectorAll(".js-add-item").forEach((button) => {
 addRecipeIngredientButton.addEventListener("click", () => {
   addRecipeRow();
   recipeList.lastElementChild.querySelector('input[name="recipe_name"]').focus();
+});
+
+singleServeRecipeButton.addEventListener("click", () => {
+  const itemNameInput = document.querySelector("#item-name");
+  const itemName = itemNameInput.value.trim();
+  if (!itemName) {
+    itemNameInput.focus();
+    return;
+  }
+  renderRecipe([{ name: itemName, ml: "", abv: "" }]);
+  recipeList.firstElementChild.querySelector('input[name="recipe_ml"]').focus();
 });
 
 function openCategoryDialog() {

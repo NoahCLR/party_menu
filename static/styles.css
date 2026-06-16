@@ -2373,9 +2373,16 @@ img {
   cursor: pointer;
 }
 
-.recipe-add-button {
-  min-height: 40px;
+.recipe-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
   margin-top: 12px;
+}
+
+.recipe-add-button,
+.recipe-single-button {
+  min-height: 40px;
 }
 
 .recipe-add-button:disabled {
