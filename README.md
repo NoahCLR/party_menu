@@ -200,9 +200,10 @@ local port mapping to the Nginx service while developing.
 
 7. Open the public hostname and verify `/`, `/host`, and `/health`.
 
-Nginx configuration is copied into `Dockerfile.nginx` at build time. There is no
-host bind mount for `nginx.conf`, avoiding Portainer file-versus-directory mount
-errors. Redeploy the stack after changing Nginx configuration.
+Nginx configuration is copied into `Dockerfile.nginx` at build time. There are no
+host bind mounts for `nginx-main.conf` or `nginx.conf`, avoiding Portainer
+file-versus-directory mount errors. Redeploy the stack after changing Nginx
+configuration.
 
 ## Configure Pushover
 
@@ -344,5 +345,6 @@ Important files:
 | `docker-compose.yml` | Production services, networks, volume, and health check |
 | `Dockerfile` | Flask/Gunicorn image |
 | `Dockerfile.nginx` | Nginx image |
-| `nginx.conf` | Reverse proxy and 50 MB upload limit |
+| `nginx-main.conf` | Non-root Nginx main process config |
+| `nginx.conf` | Reverse proxy server config and 50 MB upload limit |
 | `tests/test_app.py` | Application test suite |
