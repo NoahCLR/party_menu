@@ -49,11 +49,15 @@ function orderItem(item) {
   const alcohol = item.standard_drinks > 0
     ? `<span>${item.standard_drinks.toFixed(2)} est. drinks</span>`
     : "";
+  const recipientClass = item.recipient_is_unassigned
+    ? "order-recipient is-unassigned"
+    : "order-recipient";
   return `
     <div class="order-item">
       <div>
         <strong>${item.quantity}x ${escapeHtml(item.name)}</strong>
         <small>${escapeHtml(item.category)}</small>
+        <em class="${recipientClass}">For ${escapeHtml(item.recipient_name)}</em>
       </div>
       ${alcohol}
       ${recipe}

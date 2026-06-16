@@ -11,6 +11,7 @@ import sqlite3
 import time
 import uuid
 import zipfile
+from collections import OrderedDict
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 from urllib.error import HTTPError, URLError
@@ -56,6 +57,7 @@ WEBP_QUALITY = 84
 CATALOG_VERSION = "3"
 PUSHOVER_MESSAGES_URL = "https://api.pushover.net/1/messages.json"
 UNASSIGNED_CATEGORY = "Unassigned"
+UNASSIGNED_RECIPIENT = "Unassigned"
 GUEST_NAME_COOKIE = "party_guest_name"
 GUEST_NAME_COOKIE_MAX_AGE = 365 * 24 * 60 * 60
 MAX_BASKET_DISTINCT_ITEMS = 25
@@ -315,6 +317,12 @@ def init_db() -> None:
             sort_order INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS guest_names (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             guest_name TEXT NOT NULL,
@@ -336,6 +344,7 @@ def init_db() -> None:
             name TEXT NOT NULL,
             category TEXT NOT NULL,
             quantity INTEGER NOT NULL DEFAULT 1,
+            recipient_name TEXT NOT NULL DEFAULT '',
             recipe TEXT NOT NULL DEFAULT '[]',
             alcohol_ml REAL NOT NULL DEFAULT 0,
             alcohol_grams REAL NOT NULL DEFAULT 0,
@@ -362,7 +371,46 @@ def init_db() -> None:
         db.execute(
             "ALTER TABLE menu_items ADD COLUMN image_focus_y REAL NOT NULL DEFAULT 50"
         )
+    order_item_columns = {
+        row["name"] for row in db.execute("PRAGMA table_info(order_items)").fetchall()
+    }
+    if "recipient_name" not in order_item_columns:
+        db.execute(
+            "ALTER TABLE order_items ADD COLUMN recipient_name TEXT NOT NULL DEFAULT ''"
+        )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_order_items_recipient ON order_items(recipient_name)"
+    )
     db.execute("BEGIN IMMEDIATE")
+    if "recipient_name" not in order_item_columns:
+        db.execute(
+            """
+            UPDATE order_items
+            SET recipient_name = (
+                SELECT guest_name FROM orders WHERE orders.id = order_items.order_id
+            )
+            WHERE TRIM(recipient_name) = ''
+            """
+        )
+    db.execute(
+        """
+        INSERT OR IGNORE INTO guest_names (name)
+        SELECT DISTINCT guest_name
+        FROM orders
+        WHERE TRIM(guest_name) != '' AND guest_name != ? COLLATE NOCASE
+        """,
+        (UNASSIGNED_RECIPIENT,),
+    )
+    db.execute(
+        """
+        INSERT OR IGNORE INTO guest_names (name)
+        SELECT DISTINCT recipient_name
+        FROM order_items
+        WHERE TRIM(recipient_name) != ''
+            AND recipient_name != ? COLLATE NOCASE
+        """,
+        (UNASSIGNED_RECIPIENT,),
+    )
     categories_initialized = db.execute(
         "SELECT value FROM app_meta WHERE key = 'categories_initialized'"
     ).fetchone()
@@ -556,6 +604,60 @@ def parse_available(value: str | None, default: bool = True) -> int:
 
 def clean_guest_name(value: str | None) -> str:
     return " ".join((value or "").strip().split())[:80]
+
+
+def is_reserved_guest_name(value: str | None) -> bool:
+    return clean_guest_name(value).casefold() == UNASSIGNED_RECIPIENT.casefold()
+
+
+def normalize_guest_name_input(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("Drink names must be text.")
+    submitted = " ".join(value.strip().split())
+    if len(submitted) > 80:
+        raise ValueError("Drink names may not exceed 80 characters.")
+    if is_reserved_guest_name(submitted):
+        raise ValueError("Unassigned is reserved for the host.")
+    return clean_guest_name(submitted)
+
+
+def guest_name_label(value: str | None) -> str:
+    name = clean_guest_name(value)
+    return name if name else UNASSIGNED_RECIPIENT
+
+
+def remember_guest_names(names: list[str]) -> None:
+    db = get_db()
+    seen = set()
+    for raw_name in names:
+        name = clean_guest_name(raw_name)
+        key = name.casefold()
+        if not name or is_reserved_guest_name(name) or key in seen:
+            continue
+        seen.add(key)
+        db.execute("INSERT OR IGNORE INTO guest_names (name) VALUES (?)", (name,))
+        db.execute(
+            """
+            UPDATE guest_names
+            SET last_seen_at = CURRENT_TIMESTAMP
+            WHERE name = ? COLLATE NOCASE
+            """,
+            (name,),
+        )
+
+
+def load_guest_name_options(limit: int = 50) -> list[str]:
+    rows = get_db().execute(
+        """
+        SELECT name
+        FROM guest_names
+        WHERE name != ? COLLATE NOCASE
+        ORDER BY last_seen_at DESC, name COLLATE NOCASE
+        LIMIT ?
+        """,
+        (UNASSIGNED_RECIPIENT, limit),
+    ).fetchall()
+    return [row["name"] for row in rows]
 
 
 def normalize_recipe(entries: object) -> list[dict[str, str]]:
@@ -909,6 +1011,14 @@ def create_order(
 
     for item in items:
         quantity = int(item.get("quantity", 1))
+        raw_recipients = item.get("recipients") or [guest_name] * quantity
+        if len(raw_recipients) != quantity:
+            raise ValueError("Each ordered drink needs one recipient name.")
+        recipients = []
+        for raw_recipient in raw_recipients:
+            recipient_name = normalize_guest_name_input(raw_recipient)
+            recipients.append(recipient_name or guest_name)
+
         recipe = normalize_recipe(item.get("recipe") or [])
         item_alcohol_ml, item_alcohol_grams = recipe_alcohol_totals(recipe)
         line_alcohol_ml = item_alcohol_ml * quantity
@@ -916,17 +1026,24 @@ def create_order(
         total_quantity += quantity
         total_alcohol_ml += line_alcohol_ml
         total_alcohol_grams += line_alcohol_grams
-        prepared_items.append(
-            {
-                "menu_item_id": item.get("id"),
-                "name": item["name"],
-                "category": item["category"],
-                "quantity": quantity,
-                "recipe": recipe_json(recipe),
-                "alcohol_ml": rounded_float(line_alcohol_ml),
-                "alcohol_grams": rounded_float(line_alcohol_grams),
-            }
-        )
+        recipient_counts: OrderedDict[str, int] = OrderedDict()
+        for recipient_name in recipients:
+            recipient_counts[recipient_name] = recipient_counts.get(recipient_name, 0) + 1
+        for recipient_name, recipient_quantity in recipient_counts.items():
+            prepared_items.append(
+                {
+                    "menu_item_id": item.get("id"),
+                    "name": item["name"],
+                    "category": item["category"],
+                    "quantity": recipient_quantity,
+                    "recipient_name": recipient_name,
+                    "recipe": recipe_json(recipe),
+                    "alcohol_ml": rounded_float(item_alcohol_ml * recipient_quantity),
+                    "alcohol_grams": rounded_float(
+                        item_alcohol_grams * recipient_quantity
+                    ),
+                }
+            )
 
     cursor = db.execute(
         """
@@ -948,9 +1065,9 @@ def create_order(
     db.executemany(
         """
         INSERT INTO order_items
-            (order_id, menu_item_id, name, category, quantity, recipe,
+            (order_id, menu_item_id, name, category, quantity, recipient_name, recipe,
              alcohol_ml, alcohol_grams)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             (
@@ -959,12 +1076,16 @@ def create_order(
                 item["name"],
                 item["category"],
                 item["quantity"],
+                item["recipient_name"],
                 item["recipe"],
                 item["alcohol_ml"],
                 item["alcohol_grams"],
             )
             for item in prepared_items
         ],
+    )
+    remember_guest_names(
+        [guest_name, *[item["recipient_name"] for item in prepared_items]]
     )
     db.commit()
     return order_id
@@ -985,6 +1106,8 @@ def serialize_order(row: sqlite3.Row, items: list[sqlite3.Row]) -> dict:
                 "name": item["name"],
                 "category": item["category"],
                 "quantity": item["quantity"],
+                "recipient_name": guest_name_label(item["recipient_name"]),
+                "recipient_is_unassigned": not clean_guest_name(item["recipient_name"]),
                 "recipe": recipe,
                 "alcohol_ml": item["alcohol_ml"],
                 "alcohol_grams": item["alcohol_grams"],
@@ -1035,6 +1158,41 @@ def load_orders(status: str = "active") -> list[dict]:
     return orders
 
 
+def load_guest_names() -> list[dict]:
+    rows = get_db().execute(
+        """
+        SELECT
+            guest_names.id,
+            guest_names.name,
+            guest_names.created_at,
+            guest_names.last_seen_at,
+            COUNT(DISTINCT order_items.order_id) AS orders,
+            COALESCE(SUM(order_items.quantity), 0) AS items,
+            COALESCE(SUM(order_items.alcohol_grams), 0) AS alcohol_grams
+        FROM guest_names
+        LEFT JOIN order_items
+            ON order_items.recipient_name = guest_names.name COLLATE NOCASE
+        WHERE guest_names.name != ? COLLATE NOCASE
+        GROUP BY guest_names.id
+        ORDER BY guest_names.name COLLATE NOCASE
+        """,
+        (UNASSIGNED_RECIPIENT,),
+    ).fetchall()
+    return [
+        {
+            "id": row["id"],
+            "name": row["name"],
+            "orders": row["orders"],
+            "items": row["items"],
+            "alcohol_grams": rounded_float(Decimal(str(row["alcohol_grams"] or 0))),
+            "standard_drinks": standard_drinks(row["alcohol_grams"] or 0),
+            "created_at": iso_timestamp(row["created_at"]),
+            "last_seen_at": iso_timestamp(row["last_seen_at"]),
+        }
+        for row in rows
+    ]
+
+
 def order_queue_summary() -> dict:
     db = get_db()
     row = db.execute(
@@ -1064,16 +1222,29 @@ def build_order_stats() -> dict:
     guest_rows = db.execute(
         """
         SELECT
-            guest_name,
-            COUNT(*) AS orders,
-            COALESCE(SUM(item_count), 0) AS items,
-            COALESCE(SUM(total_alcohol_grams), 0) AS alcohol_grams,
+            recipient_name AS guest_name,
+            COUNT(DISTINCT order_id) AS orders,
+            COALESCE(SUM(quantity), 0) AS items,
+            COALESCE(SUM(alcohol_grams), 0) AS alcohol_grams,
             MIN(submitted_at) AS first_order_at,
             MAX(submitted_at) AS last_order_at
-        FROM orders
-        GROUP BY guest_name COLLATE NOCASE
+        FROM (
+            SELECT
+                CASE
+                    WHEN TRIM(order_items.recipient_name) = '' THEN ?
+                    ELSE order_items.recipient_name
+                END AS recipient_name,
+                order_items.order_id,
+                order_items.quantity,
+                order_items.alcohol_grams,
+                orders.submitted_at
+            FROM order_items
+            JOIN orders ON orders.id = order_items.order_id
+        )
+        GROUP BY recipient_name COLLATE NOCASE
         ORDER BY items DESC, orders DESC, guest_name COLLATE NOCASE
-        """
+        """,
+        (UNASSIGNED_RECIPIENT,),
     ).fetchall()
     item_rows = db.execute(
         """
@@ -1099,42 +1270,118 @@ def build_order_stats() -> dict:
         ORDER BY hour
         """
     ).fetchall()
+    category_rows = db.execute(
+        """
+        SELECT
+            category,
+            COALESCE(SUM(quantity), 0) AS quantity,
+            COALESCE(SUM(alcohol_grams), 0) AS alcohol_grams
+        FROM order_items
+        GROUP BY category
+        ORDER BY quantity DESC, category COLLATE NOCASE
+        """
+    ).fetchall()
+    biggest_order_row = db.execute(
+        """
+        SELECT
+            guest_name,
+            item_count,
+            total_alcohol_grams,
+            submitted_at
+        FROM orders
+        ORDER BY item_count DESC, submitted_at DESC, id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    guests = [
+        {
+            "guest_name": row["guest_name"],
+            "orders": row["orders"],
+            "items": row["items"],
+            "alcohol_grams": rounded_float(Decimal(str(row["alcohol_grams"] or 0))),
+            "standard_drinks": standard_drinks(row["alcohol_grams"] or 0),
+            "first_order_at": iso_timestamp(row["first_order_at"]),
+            "last_order_at": iso_timestamp(row["last_order_at"]),
+        }
+        for row in guest_rows
+    ]
+    items = [
+        {
+            "name": row["name"],
+            "category": row["category"],
+            "quantity": row["quantity"],
+            "alcohol_grams": rounded_float(Decimal(str(row["alcohol_grams"] or 0))),
+            "standard_drinks": standard_drinks(row["alcohol_grams"] or 0),
+        }
+        for row in item_rows
+    ]
+    timeline = [
+        {
+            "hour": iso_timestamp(row["hour"]),
+            "orders": row["orders"],
+            "items": row["items"],
+        }
+        for row in hour_rows
+    ]
+    categories = [
+        {
+            "category": row["category"],
+            "quantity": row["quantity"],
+            "alcohol_grams": rounded_float(Decimal(str(row["alcohol_grams"] or 0))),
+            "standard_drinks": standard_drinks(row["alcohol_grams"] or 0),
+        }
+        for row in category_rows
+    ]
+    total_orders = summary["total_orders"] or 0
+    avg_items_per_order = (
+        rounded_float(Decimal(str(summary["total_items"])) / Decimal(str(total_orders)))
+        if total_orders
+        else 0
+    )
+    completion_rate = (
+        rounded_float(
+            Decimal(str(summary["completed_orders"])) / Decimal(str(total_orders)) * 100
+        )
+        if total_orders
+        else 0
+    )
+    peak_hour = max(timeline, key=lambda row: (row["items"], row["orders"]), default=None)
+    biggest_order = (
+        {
+            "guest_name": biggest_order_row["guest_name"],
+            "item_count": biggest_order_row["item_count"],
+            "standard_drinks": standard_drinks(biggest_order_row["total_alcohol_grams"] or 0),
+            "submitted_at": iso_timestamp(biggest_order_row["submitted_at"]),
+        }
+        if biggest_order_row
+        else None
+    )
     return {
         "summary": summary,
-        "guests": [
-            {
-                "guest_name": row["guest_name"],
-                "orders": row["orders"],
-                "items": row["items"],
-                "alcohol_grams": rounded_float(Decimal(str(row["alcohol_grams"] or 0))),
-                "standard_drinks": standard_drinks(row["alcohol_grams"] or 0),
-                "first_order_at": iso_timestamp(row["first_order_at"]),
-                "last_order_at": iso_timestamp(row["last_order_at"]),
-            }
-            for row in guest_rows
-        ],
-        "items": [
-            {
-                "name": row["name"],
-                "category": row["category"],
-                "quantity": row["quantity"],
-                "alcohol_grams": rounded_float(Decimal(str(row["alcohol_grams"] or 0))),
-                "standard_drinks": standard_drinks(row["alcohol_grams"] or 0),
-            }
-            for row in item_rows
-        ],
-        "timeline": [
-            {
-                "hour": iso_timestamp(row["hour"]),
-                "orders": row["orders"],
-                "items": row["items"],
-            }
-            for row in hour_rows
-        ],
+        "highlights": {
+            "unique_guests": len(
+                [
+                    guest
+                    for guest in guests
+                    if not is_reserved_guest_name(guest["guest_name"])
+                ]
+            ),
+            "top_guest": guests[0] if guests else None,
+            "top_item": items[0] if items else None,
+            "top_category": categories[0] if categories else None,
+            "peak_hour": peak_hour,
+            "biggest_order": biggest_order,
+            "avg_items_per_order": avg_items_per_order,
+            "completion_rate": completion_rate,
+        },
+        "guests": guests,
+        "items": items,
+        "categories": categories,
+        "timeline": timeline,
     }
 
 
-def parse_basket_items(value: str | None) -> list[tuple[int, int]]:
+def parse_basket_items(value: str | None) -> list[dict]:
     try:
         payload = json.loads(value or "")
     except json.JSONDecodeError as error:
@@ -1168,9 +1415,17 @@ def parse_basket_items(value: str | None) -> list[tuple[int, int]]:
             raise ValueError("Your basket contains an invalid quantity.")
         if item_id in seen_ids:
             raise ValueError("Your basket contains a duplicate item.")
+        raw_recipients = entry.get("recipients") or []
+        if raw_recipients and not isinstance(raw_recipients, list):
+            raise ValueError("Your basket contains invalid drink names.")
+        if raw_recipients and len(raw_recipients) != quantity:
+            raise ValueError("Each ordered drink needs one name.")
+        recipients = []
+        for raw_recipient in raw_recipients:
+            recipients.append(normalize_guest_name_input(raw_recipient))
         seen_ids.add(item_id)
         total_quantity += quantity
-        parsed.append((item_id, quantity))
+        parsed.append({"id": item_id, "quantity": quantity, "recipients": recipients})
 
     if total_quantity > MAX_BASKET_TOTAL_ITEMS:
         raise ValueError(
@@ -1255,6 +1510,7 @@ def register_routes(app: Flask) -> None:
                 "basket.html",
                 catalog=public_catalog,
                 guest_name=guest_name,
+                guest_names=load_guest_name_options(),
                 note=note,
             )
             return (rendered, status) if status != 200 else rendered
@@ -1280,12 +1536,17 @@ def register_routes(app: Flask) -> None:
         if len(submitted_guest_name) > 80:
             flash("Your name may not exceed 80 characters.", "error")
             return render_basket(400)
+        if is_reserved_guest_name(guest_name):
+            flash("Unassigned is reserved for the host.", "error")
+            return render_basket(400)
         if len(note) > 300:
             flash("The note may not exceed 300 characters.", "error")
             return render_basket(400)
 
         items = []
-        for item_id, quantity in submitted_items:
+        for submitted_item in submitted_items:
+            item_id = submitted_item["id"]
+            quantity = submitted_item["quantity"]
             item = catalog_by_id.get(item_id)
             if item is None:
                 flash(
@@ -1293,7 +1554,9 @@ def register_routes(app: Flask) -> None:
                     "error",
                 )
                 return render_basket(400)
-            items.append({**item, "quantity": quantity})
+            recipients = submitted_item["recipients"] or [guest_name] * quantity
+            recipients = [recipient or guest_name for recipient in recipients]
+            items.append({**item, "quantity": quantity, "recipients": recipients})
 
         message = format_basket_message(items, note)
         if len(message.encode("utf-8")) > MAX_PUSHOVER_MESSAGE_LENGTH:
@@ -1362,7 +1625,11 @@ def register_routes(app: Flask) -> None:
         if request.method == "GET":
             guest_name = clean_guest_name(request.cookies.get(GUEST_NAME_COOKIE))
             return render_template(
-                "order.html", item=item, guest_name=guest_name, note=""
+                "order.html",
+                item=item,
+                guest_name=guest_name,
+                guest_names=load_guest_name_options(),
+                note="",
             )
 
         submitted_guest_name = " ".join(
@@ -1373,17 +1640,38 @@ def register_routes(app: Flask) -> None:
         if not guest_name:
             flash("Enter your name before sending the order.", "error")
             return render_template(
-                "order.html", item=item, guest_name=guest_name, note=note
+                "order.html",
+                item=item,
+                guest_name=guest_name,
+                guest_names=load_guest_name_options(),
+                note=note,
             ), 400
         if len(submitted_guest_name) > 80:
             flash("Your name may not exceed 80 characters.", "error")
             return render_template(
-                "order.html", item=item, guest_name=guest_name, note=note
+                "order.html",
+                item=item,
+                guest_name=guest_name,
+                guest_names=load_guest_name_options(),
+                note=note,
+            ), 400
+        if is_reserved_guest_name(guest_name):
+            flash("Unassigned is reserved for the host.", "error")
+            return render_template(
+                "order.html",
+                item=item,
+                guest_name=guest_name,
+                guest_names=load_guest_name_options(),
+                note=note,
             ), 400
         if len(note) > 300:
             flash("The note may not exceed 300 characters.", "error")
             return render_template(
-                "order.html", item=item, guest_name=guest_name, note=note
+                "order.html",
+                item=item,
+                guest_name=guest_name,
+                guest_names=load_guest_name_options(),
+                note=note,
             ), 400
 
         now = time.time()
@@ -1391,7 +1679,11 @@ def register_routes(app: Flask) -> None:
         if now - last_order_at < current_app.config["ORDER_COOLDOWN_SECONDS"]:
             flash("Please wait a few seconds before ordering again.", "error")
             return render_template(
-                "order.html", item=item, guest_name=guest_name, note=note
+                "order.html",
+                item=item,
+                guest_name=guest_name,
+                guest_names=load_guest_name_options(),
+                note=note,
             ), 429
 
         recipe = parse_recipe_json(item["recipe"])
@@ -1405,7 +1697,11 @@ def register_routes(app: Flask) -> None:
                 "error",
             )
             return render_template(
-                "order.html", item=item, guest_name=guest_name, note=note
+                "order.html",
+                item=item,
+                guest_name=guest_name,
+                guest_names=load_guest_name_options(),
+                note=note,
             ), 400
 
         create_order(
@@ -1540,6 +1836,36 @@ def register_routes(app: Flask) -> None:
             db.execute("DELETE FROM orders WHERE status = 'completed'")
         db.commit()
         return {"ok": True, "cleared": cleared, "action": action}
+
+    @app.get("/host/names")
+    @host_required
+    def host_names():
+        return render_template("host_names.html", guest_names=load_guest_names())
+
+    @app.post("/host/names/<int:name_id>/delete")
+    @host_required
+    def delete_guest_name(name_id: int):
+        db = get_db()
+        existing = db.execute(
+            "SELECT id, name FROM guest_names WHERE id = ?", (name_id,)
+        ).fetchone()
+        if existing is None:
+            abort(404)
+        db.execute(
+            """
+            UPDATE order_items
+            SET recipient_name = ''
+            WHERE recipient_name = ? COLLATE NOCASE
+            """,
+            (existing["name"],),
+        )
+        db.execute("DELETE FROM guest_names WHERE id = ?", (name_id,))
+        db.commit()
+        flash(
+            f"{existing['name']} was removed. Assigned drinks now show as unassigned.",
+            "success",
+        )
+        return redirect(url_for("host_names"))
 
     @app.get("/host/stats")
     @host_required

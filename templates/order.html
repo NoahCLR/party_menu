@@ -21,7 +21,7 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label for="guest_name">
           Your name
-          <input id="guest_name" name="guest_name" value="{{ guest_name }}" maxlength="80" autocomplete="name" autofocus required>
+          <input id="guest_name" name="guest_name" value="{{ guest_name }}" maxlength="80" autocomplete="name" data-name-autocomplete autofocus required>
         </label>
         <label for="note">
           Note <span>Optional</span>
@@ -32,4 +32,6 @@
       <a class="order-back" href="{{ url_for('menu') }}">Back to menu</a>
     </section>
   </main>
+  <script id="guest-names-data" type="application/json">{{ guest_names|tojson }}</script>
+  <script src="{{ static_asset('js/name-suggestions.js') }}" defer></script>
 {% endblock %}

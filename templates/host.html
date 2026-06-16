@@ -9,6 +9,7 @@
     <div class="host-header-actions">
       <a href="{{ url_for('host_orders') }}">Orders</a>
       <a href="{{ url_for('host_stats') }}">Stats</a>
+      <a href="{{ url_for('host_names') }}">Names</a>
       <a href="{{ url_for('menu') }}" target="_blank" rel="noopener">View menu</a>
       <form method="post" action="{{ url_for('host_logout') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

@@ -4,14 +4,35 @@ const basketItemsInput = document.querySelector("#basket-items-input");
 const basketEmpty = document.querySelector("#basket-empty");
 const basketTotal = document.querySelector("#basket-total");
 const basketSubmit = document.querySelector("#basket-submit");
+const guestNameInput = document.querySelector("#guest_name");
 const catalogElement = document.querySelector("#basket-catalog");
 const catalog = JSON.parse(catalogElement?.textContent || "[]");
 const catalogById = new Map(catalog.map((item) => [String(item.id), item]));
+const recipientDrafts = new Map();
+let lastGuestName = "";
 
 function checkoutState() {
   return Object.fromEntries(
     Object.entries(window.partyBasket.read()).filter(([id]) => catalogById.has(id)),
   );
+}
+
+function assignmentKey(id, index) {
+  return `${id}:${index}`;
+}
+
+function trimmedName(value) {
+  return String(value || "").trim();
+}
+
+function currentGuestName() {
+  return trimmedName(guestNameInput.value);
+}
+
+function captureRecipientInputs() {
+  basketItemsElement.querySelectorAll(".basket-recipient-input").forEach((input) => {
+    recipientDrafts.set(input.dataset.assignmentKey, input.value);
+  });
 }
 
 function quantityButton(label, ariaLabel, onClick) {
@@ -24,7 +45,44 @@ function quantityButton(label, ariaLabel, onClick) {
   return button;
 }
 
+function recipientInput(id, index, itemName) {
+  const key = assignmentKey(id, index);
+  const label = document.createElement("label");
+  label.className = "basket-recipient";
+  label.setAttribute("for", `recipient-${id}-${index}`);
+
+  const labelText = document.createElement("span");
+  labelText.textContent = `For ${itemName} #${index + 1}`;
+
+  const input = document.createElement("input");
+  const draft = recipientDrafts.get(key);
+  const isDefaultRecipient = !recipientDrafts.has(key)
+    || trimmedName(draft) === ""
+    || trimmedName(draft) === lastGuestName;
+  input.id = `recipient-${id}-${index}`;
+  input.type = "text";
+  input.maxLength = 80;
+  input.autocomplete = "name";
+  input.placeholder = currentGuestName() || "Name";
+  input.value = isDefaultRecipient ? currentGuestName() : draft;
+  input.dataset.assignmentKey = key;
+  input.dataset.defaultRecipient = isDefaultRecipient ? "true" : "false";
+  input.dataset.nameAutocomplete = "";
+  input.className = "basket-recipient-input";
+  input.addEventListener("input", () => {
+    input.dataset.defaultRecipient =
+      trimmedName(input.value) === "" || trimmedName(input.value) === currentGuestName()
+        ? "true"
+        : "false";
+    recipientDrafts.set(key, input.value);
+  });
+
+  label.append(labelText, input);
+  return label;
+}
+
 function renderBasket() {
+  captureRecipientInputs();
   const items = checkoutState();
   const storedItems = window.partyBasket.read();
   if (JSON.stringify(items) !== JSON.stringify(storedItems)) {
@@ -38,7 +96,7 @@ function renderBasket() {
   Object.entries(items).forEach(([id, quantity]) => {
     const item = catalogById.get(id);
     totalQuantity += quantity;
-    submittedItems.push({ id: Number(id), quantity });
+    const recipients = [];
 
     const row = document.createElement("article");
     row.className = "basket-checkout-item";
@@ -82,7 +140,17 @@ function renderBasket() {
     });
     controls.append(quantityControls, remove);
     row.append(itemCopy, controls);
+
+    const recipientsWrap = document.createElement("div");
+    recipientsWrap.className = "basket-recipients";
+    for (let index = 0; index < quantity; index += 1) {
+      const key = assignmentKey(id, index);
+      recipientsWrap.append(recipientInput(id, index, item.name));
+      recipients.push(trimmedName(recipientDrafts.get(key)) || currentGuestName());
+    }
+    row.append(recipientsWrap);
     basketItemsElement.append(row);
+    submittedItems.push({ id: Number(id), quantity, recipients });
   });
 
   basketItemsInput.value = JSON.stringify(submittedItems);
@@ -91,6 +159,7 @@ function renderBasket() {
   basketTotal.textContent = totalQuantity
     ? `${totalQuantity} item${totalQuantity === 1 ? "" : "s"}`
     : "";
+  window.partyNameSuggestions?.enhance(basketItemsElement);
 }
 
 basketForm.addEventListener("submit", (event) => {
@@ -100,5 +169,18 @@ basketForm.addEventListener("submit", (event) => {
   }
 });
 
+guestNameInput.addEventListener("input", () => {
+  const nextGuestName = currentGuestName();
+  basketItemsElement.querySelectorAll(".basket-recipient-input").forEach((input) => {
+    input.placeholder = nextGuestName || "Name";
+    if (input.dataset.defaultRecipient === "true") {
+      input.value = nextGuestName;
+      recipientDrafts.set(input.dataset.assignmentKey, nextGuestName);
+    }
+  });
+  lastGuestName = nextGuestName;
+});
+
 window.addEventListener("storage", renderBasket);
+lastGuestName = currentGuestName();
 renderBasket();

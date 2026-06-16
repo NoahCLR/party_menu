@@ -32,7 +32,7 @@
 
         <label for="guest_name">
           Your name
-          <input id="guest_name" name="guest_name" value="{{ guest_name }}" maxlength="80" autocomplete="name" required>
+          <input id="guest_name" name="guest_name" value="{{ guest_name }}" maxlength="80" autocomplete="name" data-name-autocomplete required>
         </label>
         <label for="note">
           Note <span>Optional</span>
@@ -45,6 +45,8 @@
   </main>
 
   <script id="basket-catalog" type="application/json">{{ catalog|tojson }}</script>
+  <script id="guest-names-data" type="application/json">{{ guest_names|tojson }}</script>
   <script src="{{ static_asset('js/basket-store.js') }}" defer></script>
+  <script src="{{ static_asset('js/name-suggestions.js') }}" defer></script>
   <script src="{{ static_asset('js/basket.js') }}" defer></script>
 {% endblock %}

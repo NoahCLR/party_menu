@@ -393,7 +393,7 @@ class MenuAppTestCase(unittest.TestCase):
             self.assertAlmostEqual(order["total_alcohol_grams"], 31.56)
             saved_items = db.execute(
                 """
-                SELECT name, quantity, recipe, alcohol_grams
+                SELECT name, quantity, recipient_name, recipe, alcohol_grams
                 FROM order_items
                 WHERE order_id = ?
                 ORDER BY id
@@ -401,8 +401,11 @@ class MenuAppTestCase(unittest.TestCase):
                 (order["id"],),
             ).fetchall()
             self.assertEqual(
-                [(item["name"], item["quantity"]) for item in saved_items],
-                [("Moscow Mule", 2), ("Garlic Olives", 1)],
+                [
+                    (item["name"], item["quantity"], item["recipient_name"])
+                    for item in saved_items
+                ],
+                [("Moscow Mule", 2, "Noah"), ("Garlic Olives", 1, "Noah")],
             )
             self.assertEqual(
                 json.loads(saved_items[0]["recipe"])[0],
@@ -441,6 +444,105 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn(b"no longer available", response.data)
         send_order.assert_not_called()
+
+    def test_basket_recipients_can_be_split_and_host_can_delete_names(self):
+        self.app.config["ORDER_COOLDOWN_SECONDS"] = 0
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            item_id = db.execute(
+                "SELECT id FROM menu_items WHERE name = 'Moscow Mule'"
+            ).fetchone()[0]
+            db.execute(
+                "UPDATE menu_items SET recipe = ? WHERE id = ?",
+                (
+                    json.dumps(
+                        [
+                            {"name": "Vodka", "ml": "50", "abv": "40"},
+                            {"name": "Ginger beer", "ml": "120"},
+                        ]
+                    ),
+                    item_id,
+                ),
+            )
+            db.commit()
+
+        token = self.token_from("/order/basket")
+        basket = [
+            {"id": item_id, "quantity": 2, "recipients": ["Noah", "Mila"]},
+        ]
+        with patch("app.send_pushover_basket_order"):
+            response = self.client.post(
+                "/order/basket",
+                data={
+                    "csrf_token": token,
+                    "basket_items": json.dumps(basket),
+                    "guest_name": "Noah",
+                    "note": "For the table",
+                },
+            )
+        self.assertEqual(response.status_code, 302)
+
+        with self.app.app_context():
+            from app import get_db
+
+            rows = get_db().execute(
+                """
+                SELECT name, quantity, recipient_name, alcohol_grams
+                FROM order_items
+                ORDER BY recipient_name
+                """
+            ).fetchall()
+            self.assertEqual(
+                [(row["name"], row["quantity"], row["recipient_name"]) for row in rows],
+                [("Moscow Mule", 1, "Mila"), ("Moscow Mule", 1, "Noah")],
+            )
+            self.assertAlmostEqual(rows[0]["alcohol_grams"], 15.78)
+
+        basket_page = self.client.get("/order/basket")
+        self.assertIn(b"guest-names-data", basket_page.data)
+        self.assertIn(b"Mila", basket_page.data)
+        self.assertIn(b"name-suggestions.js", basket_page.data)
+
+        self.login()
+        queue_json = self.client.get("/host/orders.json").json
+        recipients = {
+            item["recipient_name"] for item in queue_json["orders"][0]["items"]
+        }
+        self.assertEqual(recipients, {"Mila", "Noah"})
+
+        stats = self.client.get("/host/stats.json").json["stats"]
+        self.assertEqual(
+            [(guest["guest_name"], guest["items"]) for guest in stats["guests"]],
+            [("Mila", 1), ("Noah", 1)],
+        )
+
+        names_page = self.client.get("/host/names")
+        self.assertIn(b"Guest names", names_page.data)
+        self.assertIn(b"Mila", names_page.data)
+        self.assertNotIn(b"built-in method", names_page.data)
+        delete_match = re.search(rb'/host/names/(\d+)/delete', names_page.data)
+        self.assertIsNotNone(delete_match)
+        delete_token = self.token_from("/host/names")
+        delete_response = self.client.post(
+            delete_match.group(0).decode(),
+            data={"csrf_token": delete_token},
+            follow_redirects=True,
+        )
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertNotIn(b"<strong>Mila</strong>", delete_response.data)
+
+        queue_after_delete = self.client.get("/host/orders.json").json
+        deleted_recipients = {
+            item["recipient_name"] for item in queue_after_delete["orders"][0]["items"]
+        }
+        self.assertEqual(deleted_recipients, {"Noah", "Unassigned"})
+        stats_after_delete = self.client.get("/host/stats.json").json["stats"]
+        self.assertEqual(
+            [(guest["guest_name"], guest["items"]) for guest in stats_after_delete["guests"]],
+            [("Noah", 1), ("Unassigned", 1)],
+        )
 
     def test_basket_checkout_rejects_invalid_quantities(self):
         with self.app.app_context():
@@ -605,15 +707,28 @@ class MenuAppTestCase(unittest.TestCase):
         queue_json = self.client.get("/host/orders.json").json
         self.assertEqual(queue_json["summary"]["active_orders"], 1)
         self.assertEqual(queue_json["orders"][0]["guest_name"], "Mila")
+        self.assertEqual(queue_json["orders"][0]["items"][0]["recipient_name"], "Mila")
         self.assertAlmostEqual(queue_json["orders"][0]["total_alcohol_grams"], 12.62)
 
         stats_page = self.client.get("/host/stats")
         self.assertIn(b"Party stats", stats_page.data)
         self.assertIn(b"host-stats.js", stats_page.data)
+        self.assertIn(b'id="highlight-stats"', stats_page.data)
+        self.assertIn(b'id="timeline-graph"', stats_page.data)
+        self.assertIn(b'id="category-stats"', stats_page.data)
         stats_json = self.client.get("/host/stats.json").json["stats"]
         self.assertEqual(stats_json["summary"]["total_orders"], 1)
         self.assertEqual(stats_json["guests"][0]["guest_name"], "Mila")
         self.assertAlmostEqual(stats_json["guests"][0]["standard_drinks"], 1.26)
+        self.assertEqual(stats_json["highlights"]["unique_guests"], 1)
+        self.assertEqual(stats_json["highlights"]["top_guest"]["guest_name"], "Mila")
+        self.assertEqual(stats_json["highlights"]["top_item"]["name"], "Espresso Martini")
+        self.assertEqual(stats_json["highlights"]["top_category"]["category"], "Cocktails")
+        self.assertEqual(stats_json["highlights"]["biggest_order"]["item_count"], 1)
+        self.assertAlmostEqual(stats_json["highlights"]["avg_items_per_order"], 1.0)
+        self.assertAlmostEqual(stats_json["highlights"]["completion_rate"], 0.0)
+        self.assertEqual(stats_json["categories"][0]["category"], "Cocktails")
+        self.assertEqual(stats_json["timeline"][0]["items"], 1)
 
         host_token = self.token_from("/host/orders")
         order_id = queue_json["orders"][0]["id"]
@@ -623,6 +738,10 @@ class MenuAppTestCase(unittest.TestCase):
         )
         self.assertEqual(complete.status_code, 200)
         self.assertEqual(self.client.get("/host/orders.json").json["orders"], [])
+        self.assertAlmostEqual(
+            self.client.get("/host/stats.json").json["stats"]["highlights"]["completion_rate"],
+            100.0,
+        )
         completed = self.client.get("/host/orders.json?status=completed").json
         self.assertEqual(completed["orders"][0]["status"], "completed")
 

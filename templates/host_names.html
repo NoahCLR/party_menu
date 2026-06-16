@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Guest names · Tonight's Menu{% endblock %}
+{% block body_class %}host-page{% endblock %}
+
+{% block body %}
+  <header class="host-header">
+    <a class="host-brand" href="{{ url_for('host_editor') }}">Tonight's Menu <span>/ Host</span></a>
+    <div class="host-header-actions">
+      <a href="{{ url_for('host_editor') }}">Editor</a>
+      <a href="{{ url_for('host_orders') }}">Orders</a>
+      <a href="{{ url_for('host_stats') }}">Stats</a>
+      <a href="{{ url_for('host_names') }}">Names</a>
+      <a href="{{ url_for('menu') }}" target="_blank" rel="noopener">View menu</a>
+      <form method="post" action="{{ url_for('host_logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="link-button" type="submit">Log out</button>
+      </form>
+    </div>
+  </header>
+
+  <main class="host-dashboard">
+    <div class="host-dashboard-title">
+      <div>
+        <p class="mobile-section-number">04</p>
+        <h1>Guest names</h1>
+        <p>Names used for drink assignment and guest autocomplete.</p>
+      </div>
+      <a class="button button-outline" href="{{ url_for('host_orders') }}">View queue</a>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="flash {{ category }}" role="status">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    {% if guest_names %}
+      <div class="table-wrap">
+        <table class="menu-table guest-name-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Orders</th>
+              <th>Items</th>
+              <th>Est. drinks</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for guest in guest_names %}
+              <tr>
+                <td data-label="Name"><strong>{{ guest['name'] }}</strong></td>
+                <td data-label="Orders">{{ guest['orders'] }}</td>
+                <td data-label="Items">{{ guest['items'] }}</td>
+                <td data-label="Est. drinks">{{ "%.2f"|format(guest['standard_drinks']) }}</td>
+                <td data-label="Action">
+                  <form method="post" action="{{ url_for('delete_guest_name', name_id=guest['id']) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="icon-button" type="submit">Delete name</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="dashboard-empty">No guest names yet. Names appear after orders are placed.</p>
+    {% endif %}
+  </main>
+{% endblock %}
