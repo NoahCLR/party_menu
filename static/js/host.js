@@ -20,7 +20,63 @@ const imageFocusPreviewImage = document.querySelector("#image-focus-preview-imag
 const imageFocusMarker = document.querySelector("#image-focus-marker");
 const imageFocusValue = document.querySelector("#image-focus-value");
 const imageFocusEmpty = document.querySelector("#image-focus-empty");
+const hostSearchInput = document.querySelector("#host-search-input");
+const hostSearchClear = document.querySelector("#host-search-clear");
+const hostSearchStatus = document.querySelector("#host-search-status");
+const hostSearchEmpty = document.querySelector("#host-search-empty");
+const hostFilterEmpty = document.querySelector("#host-filter-empty");
+const hostRows = Array.from(document.querySelectorAll("[data-host-row]"));
 let previewObjectUrl = "";
+
+const normalizeHostSearchText = (value) =>
+  value
+    .normalize("NFKD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLocaleLowerCase()
+    .trim();
+
+function recipeSearchText(item) {
+  if (!Array.isArray(item?.recipe)) return "";
+  return item.recipe.map((ingredient) => ingredient.name || "").join(" ");
+}
+
+const searchableHostRows = hostRows.map((row) => {
+  const item = items.get(row.dataset.id);
+  const availability = item?.available ? "available" : "out";
+  return {
+    row,
+    text: normalizeHostSearchText(
+      `${item?.name || ""} ${item?.description || ""} ${item?.category || ""} ${availability} ${recipeSearchText(item)}`,
+    ),
+  };
+});
+
+function filterHostRows() {
+  const rawQuery = hostSearchInput.value.trim();
+  const query = normalizeHostSearchText(rawQuery);
+  let resultCount = 0;
+
+  searchableHostRows.forEach((item) => {
+    const matches = !query || item.text.includes(query);
+    item.row.hidden = !matches;
+    if (matches) resultCount += 1;
+  });
+
+  hostSearchClear.hidden = !query;
+  if (hostFilterEmpty) hostFilterEmpty.hidden = Boolean(query);
+  hostSearchEmpty.hidden = !query || resultCount > 0;
+  hostSearchStatus.textContent = query
+    ? `${resultCount} result${resultCount === 1 ? "" : "s"} for "${rawQuery}"`
+    : `${searchableHostRows.length} item${searchableHostRows.length === 1 ? "" : "s"} in this view`;
+}
+
+hostSearchInput.addEventListener("input", filterHostRows);
+hostSearchInput.addEventListener("search", filterHostRows);
+hostSearchClear.addEventListener("click", () => {
+  hostSearchInput.value = "";
+  filterHostRows();
+  hostSearchInput.focus();
+});
 
 function clampFocus(value) {
   return Math.min(100, Math.max(0, Number(value) || 0));

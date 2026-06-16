@@ -531,10 +531,16 @@ class MenuAppTestCase(unittest.TestCase):
         response = self.client.get("/host")
         self.assertRegex(response.text, r'/static/styles\.css\?v=\d+')
         self.assertRegex(response.text, r'/static/js/host\.js\?v=\d+')
+        self.assertIn(b'id="host-search-input"', response.data)
+        self.assertIn(b"Search name, description, category, or recipe", response.data)
+        self.assertIn(b"data-host-row", response.data)
+        self.assertIn(b'id="host-search-empty"', response.data)
 
         stylesheet_response = self.client.get("/static/styles.css")
         stylesheet = stylesheet_response.text
         stylesheet_response.close()
+        self.assertIn(".host-search {", stylesheet)
+        self.assertIn("[data-host-row][hidden]", stylesheet)
         self.assertIn('body input:not([type="hidden"])', stylesheet)
         self.assertIn("body select,", stylesheet)
         self.assertIn("body textarea {\n    font-size: 16px;", stylesheet)

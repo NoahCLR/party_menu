@@ -68,6 +68,15 @@
         {% endfor %}
       {% endwith %}
 
+      <section class="host-search" aria-label="Search host menu">
+        <label for="host-search-input">Search items to edit</label>
+        <div class="host-search-control">
+          <input id="host-search-input" type="search" placeholder="Search name, description, category, or recipe" autocomplete="off" spellcheck="false">
+          <button id="host-search-clear" type="button" aria-label="Clear host search" hidden><span aria-hidden="true">×</span></button>
+        </div>
+        <p id="host-search-status" aria-live="polite">{{ items|length }} item{% if items|length != 1 %}s{% endif %} in this view</p>
+      </section>
+
       <div class="table-wrap">
         <table class="menu-table">
           <thead>
@@ -82,7 +91,7 @@
           </thead>
           <tbody>
             {% for item in items %}
-              <tr>
+              <tr data-host-row data-id="{{ item['id'] }}">
                 <td class="order-cell" data-label="Order">
                   <div class="order-controls">
                     <form method="post" action="{{ url_for('move_item', item_id=item['id'], direction='up') }}">
@@ -129,8 +138,9 @@
                 </td>
               </tr>
             {% else %}
-              <tr><td class="empty-table" colspan="6">No items match these filters.</td></tr>
+              <tr id="host-filter-empty"><td class="empty-table" colspan="6">No items match these filters.</td></tr>
             {% endfor %}
+            <tr id="host-search-empty" hidden><td class="empty-table" colspan="6">No items match that search.</td></tr>
           </tbody>
         </table>
       </div>

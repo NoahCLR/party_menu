@@ -95,7 +95,7 @@ in a persistent Docker volume.
 ```text
 Internet
   -> Cloudflare Tunnel
-  -> party-menu-nginx:80 on ncleroy-net
+  -> party-menu-nginx:8080 on ncleroy-net
   -> Nginx on party-menu-internal
   -> Gunicorn / Flask on menu:8000
   -> SQLite + uploads in menu_data
@@ -195,7 +195,7 @@ local port mapping to the Nginx service while developing.
 6. In Cloudflare Zero Trust, point the public hostname at:
 
    ```text
-   http://party-menu-nginx:80
+   http://party-menu-nginx:8080
    ```
 
 7. Open the public hostname and verify `/`, `/host`, and `/health`.
@@ -276,6 +276,11 @@ crop focus, and local images. It does not change environment variables.
 - Use unique values for `ADMIN_PASSWORD` and `SECRET_KEY`.
 - Never expose the Flask or Nginx container directly unless you intentionally add
   authentication and firewall controls.
+- Production containers run without extra Linux capabilities, with
+  `no-new-privileges`, read-only root filesystems, and tmpfs mounts only for
+  runtime scratch space. The persistent writable path is the `menu_data` volume.
+- Nginx listens on unprivileged port `8080` inside Docker so it can run as a
+  non-root user without `CAP_NET_BIND_SERVICE`.
 - Host mutations and orders are protected by CSRF tokens.
 - Sessions are HTTP-only and use `SameSite=Lax`.
 - Uploaded files are decoded as images before being stored.
@@ -307,7 +312,7 @@ access through `party-menu-egress`, and inspect the `menu` service logs.
 ### Cloudflare returns a gateway error
 
 Verify Cloudflared and `nginx` are both attached to `ncleroy-net`, and that the
-tunnel service is `http://party-menu-nginx:80`.
+tunnel service is `http://party-menu-nginx:8080`.
 
 ### An import skips rows
 

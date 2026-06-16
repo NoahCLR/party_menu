@@ -1032,6 +1032,89 @@ img {
   background: var(--black);
 }
 
+.host-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 9px 18px;
+  align-items: end;
+  margin-bottom: 18px;
+}
+
+.host-search label {
+  grid-column: 1 / -1;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.host-search-control {
+  position: relative;
+  min-width: 0;
+}
+
+.host-search-control input {
+  width: 100%;
+  min-width: 0;
+  min-height: 45px;
+  padding: 11px 52px 11px 13px;
+  -webkit-appearance: none;
+  appearance: none;
+  color: var(--black);
+  background: var(--white);
+  border: 1px solid var(--black);
+  border-radius: 0;
+}
+
+.host-search-control input::-webkit-search-cancel-button {
+  display: none;
+  -webkit-appearance: none;
+}
+
+.host-search-control input::placeholder {
+  color: var(--gray-500);
+}
+
+.host-search-control button {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  width: 44px;
+  padding: 0;
+  color: var(--black);
+  background: var(--white);
+  border: 0;
+  border-left: 1px solid var(--black);
+  border-radius: 0;
+  font-size: 1.45rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.host-search-control button:hover,
+.host-search-control button:focus-visible {
+  color: var(--white);
+  background: var(--black);
+}
+
+.host-search p {
+  max-width: 34ch;
+  margin: 0 0 14px;
+  color: var(--gray-500);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+  text-align: right;
+  white-space: normal;
+}
+
+[data-host-row][hidden],
+#host-filter-empty[hidden],
+#host-search-empty[hidden],
+.host-search-control button[hidden] {
+  display: none;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -2042,6 +2125,16 @@ code {
 
   .editor-actions .js-add-category {
     grid-column: 1 / -1;
+  }
+
+  .host-search {
+    grid-template-columns: 1fr;
+  }
+
+  .host-search p {
+    margin: 0;
+    text-align: left;
+    white-space: normal;
   }
 
   .menu-table,

@@ -2,6 +2,14 @@ services:
   menu:
     build: .
     restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     environment:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in Portainer}
       SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in Portainer}
@@ -28,11 +36,20 @@ services:
       context: .
       dockerfile: Dockerfile.nginx
     restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+      - /var/cache/nginx:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       menu:
         condition: service_healthy
     expose:
-      - "80"
+      - "8080"
     networks:
       party-menu-internal:
       ncleroy-net:
