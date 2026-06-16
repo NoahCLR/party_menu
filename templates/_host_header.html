@@ -1,0 +1,24 @@
+<header class="host-header">
+  <a class="host-brand" href="{{ url_for('host_editor') }}">Tonight's Menu <span>/ Host</span></a>
+  <nav class="host-tabs" aria-label="Host navigation">
+    <a class="host-tab{% if active_host_tab == 'editor' %} active{% endif %}"{% if active_host_tab == 'editor' %} aria-current="page"{% endif %} href="{{ url_for('host_editor') }}">
+      <span>01</span><strong>Editor</strong>
+    </a>
+    <a class="host-tab{% if active_host_tab == 'orders' %} active{% endif %}"{% if active_host_tab == 'orders' %} aria-current="page"{% endif %} href="{{ url_for('host_orders') }}">
+      <span>02</span><strong>Orders</strong>
+    </a>
+    <a class="host-tab{% if active_host_tab == 'stats' %} active{% endif %}"{% if active_host_tab == 'stats' %} aria-current="page"{% endif %} href="{{ url_for('host_stats') }}">
+      <span>03</span><strong>Stats</strong>
+    </a>
+    <a class="host-tab{% if active_host_tab == 'names' %} active{% endif %}"{% if active_host_tab == 'names' %} aria-current="page"{% endif %} href="{{ url_for('host_names') }}">
+      <span>04</span><strong>Names</strong>
+    </a>
+  </nav>
+  <div class="host-utility-actions">
+    <a class="host-utility-link" href="{{ url_for('menu') }}" target="_blank" rel="noopener">View menu</a>
+    <form method="post" action="{{ url_for('host_logout') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="link-button" type="submit">Log out</button>
+    </form>
+  </div>
+</header>

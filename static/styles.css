@@ -894,11 +894,16 @@ img {
 }
 
 .host-header {
-  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  min-height: 74px;
-  padding: 14px 30px;
+  gap: 18px;
+  min-height: 82px;
+  padding: 12px 30px;
+  background: var(--white);
   border-bottom: 1px solid var(--black);
 }
 
@@ -917,30 +922,77 @@ img {
   color: var(--gray-500);
 }
 
-.host-header-actions,
-.host-header-actions form {
+.host-tabs {
+  display: inline-flex;
+  justify-self: end;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--white);
+  border: 1px solid var(--black);
+}
+
+.host-tab {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 14px;
+  color: var(--black);
+  text-decoration: none;
+  border-right: 1px solid var(--black);
+}
+
+.host-tab:last-child {
+  border-right: 0;
+}
+
+.host-tab span {
+  color: var(--gray-500);
+  font-family: var(--display);
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.host-tab strong {
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.host-tab:hover,
+.host-tab:focus-visible {
+  background: var(--gray-100);
+}
+
+.host-tab.active {
+  color: var(--white);
+  background: var(--black);
+}
+
+.host-tab.active span {
+  color: var(--white);
+  opacity: 0.72;
+}
+
+.host-utility-actions,
+.host-utility-actions form {
   display: flex;
   align-items: center;
-  gap: 28px;
+  gap: 16px;
   margin: 0;
 }
 
-.host-header-actions {
-  flex-wrap: wrap;
+.host-utility-actions {
   justify-content: flex-end;
 }
 
-.host-header-actions a,
+.host-utility-link,
 .link-button,
 .text-link {
   color: var(--black);
   font-size: 0.88rem;
   text-underline-offset: 4px;
-}
-
-.host-header-actions a.active {
-  font-weight: 900;
-  text-decoration-thickness: 2px;
 }
 
 .link-button {
@@ -954,7 +1006,7 @@ img {
 .editor-layout {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr);
-  min-height: calc(100vh - 74px);
+  min-height: calc(100vh - 82px);
 }
 
 .editor-sidebar {
@@ -3353,12 +3405,15 @@ code {
   }
 
   .host-header {
-    min-height: 64px;
-    padding: 12px 15px;
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    gap: 10px;
+    min-height: 0;
+    padding: 12px 14px 14px;
   }
 
   .host-brand {
-    max-width: 118px;
+    max-width: none;
     font-size: 1.5rem;
     line-height: 0.9;
   }
@@ -3367,16 +3422,40 @@ code {
     display: none;
   }
 
-  .host-header-actions,
-  .host-header-actions form {
-    gap: 8px 12px;
+  .host-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    justify-self: stretch;
+    width: 100%;
+    overflow: visible;
   }
 
-  .host-header-actions {
-    max-width: calc(100% - 130px);
+  .host-tab {
+    justify-content: center;
+    min-height: 38px;
+    padding: 0 8px;
+    gap: 5px;
   }
 
-  .host-header-actions a,
+  .host-tab span {
+    font-size: 0.88rem;
+  }
+
+  .host-tab strong {
+    font-size: 0.68rem;
+  }
+
+  .host-utility-actions,
+  .host-utility-actions form {
+    gap: 10px;
+  }
+
+  .host-utility-actions {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .host-utility-link,
   .link-button {
     font-size: 0.75rem;
   }
