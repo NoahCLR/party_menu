@@ -1300,6 +1300,90 @@ def sync_order_status_from_items(order_id: int) -> str:
     return "new"
 
 
+def recalculate_order_totals(order_id: int) -> bool:
+    db = get_db()
+    row = db.execute(
+        """
+        SELECT
+            COUNT(*) AS item_rows,
+            COALESCE(SUM(quantity), 0) AS item_count,
+            COALESCE(SUM(alcohol_ml), 0) AS alcohol_ml,
+            COALESCE(SUM(alcohol_grams), 0) AS alcohol_grams,
+            SUM(completed_at IS NULL) AS open_items
+        FROM order_items
+        WHERE order_id = ?
+        """,
+        (order_id,),
+    ).fetchone()
+    if not row["item_rows"]:
+        db.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+        return False
+
+    completed = (row["open_items"] or 0) == 0
+    db.execute(
+        """
+        UPDATE orders
+        SET item_count = ?,
+            total_alcohol_ml = ?,
+            total_alcohol_grams = ?,
+            status = ?,
+            completed_at = CASE
+                WHEN ? THEN COALESCE(completed_at, CURRENT_TIMESTAMP)
+                ELSE NULL
+            END
+        WHERE id = ?
+        """,
+        (
+            row["item_count"] or 0,
+            rounded_float(Decimal(str(row["alcohol_ml"] or 0))),
+            rounded_float(Decimal(str(row["alcohol_grams"] or 0))),
+            "completed" if completed else "new",
+            int(completed),
+            order_id,
+        ),
+    )
+    return True
+
+
+def remove_one_order_item(item_id: int) -> tuple[int, str]:
+    db = get_db()
+    item = db.execute(
+        """
+        SELECT id, order_id, name, quantity, alcohol_ml, alcohol_grams
+        FROM order_items
+        WHERE id = ?
+        """,
+        (item_id,),
+    ).fetchone()
+    if item is None:
+        abort(404)
+
+    quantity = item["quantity"] or 0
+    if quantity > 1:
+        remaining = quantity - 1
+        unit_alcohol_ml = Decimal(str(item["alcohol_ml"] or 0)) / Decimal(str(quantity))
+        unit_alcohol_grams = Decimal(str(item["alcohol_grams"] or 0)) / Decimal(str(quantity))
+        db.execute(
+            """
+            UPDATE order_items
+            SET quantity = ?,
+                alcohol_ml = ?,
+                alcohol_grams = ?
+            WHERE id = ?
+            """,
+            (
+                remaining,
+                rounded_float(unit_alcohol_ml * remaining),
+                rounded_float(unit_alcohol_grams * remaining),
+                item_id,
+            ),
+        )
+    else:
+        db.execute("DELETE FROM order_items WHERE id = ?", (item_id,))
+    recalculate_order_totals(item["order_id"])
+    return item["order_id"], item["name"]
+
+
 def serialize_order(row: sqlite3.Row, items: list[sqlite3.Row]) -> dict:
     order_items = []
     for item in items:
@@ -1382,6 +1466,7 @@ def load_guest_names() -> list[dict]:
             guest_names.last_seen_at,
             COUNT(DISTINCT order_items.order_id) AS orders,
             COALESCE(SUM(order_items.quantity), 0) AS items,
+            COALESCE(SUM(order_items.alcohol_ml), 0) AS alcohol_ml,
             COALESCE(SUM(order_items.alcohol_grams), 0) AS alcohol_grams
         FROM guest_names
         LEFT JOIN order_items
@@ -1398,6 +1483,7 @@ def load_guest_names() -> list[dict]:
             "name": row["name"],
             "orders": row["orders"],
             "items": row["items"],
+            "alcohol_ml": rounded_float(Decimal(str(row["alcohol_ml"] or 0))),
             "alcohol_grams": rounded_float(Decimal(str(row["alcohol_grams"] or 0))),
             "standard_drinks": standard_drinks(row["alcohol_grams"] or 0),
             "created_at": iso_timestamp(row["created_at"]),
@@ -1405,6 +1491,153 @@ def load_guest_names() -> list[dict]:
         }
         for row in rows
     ]
+
+
+def same_guest_name(left: str | None, right: str | None) -> bool:
+    return clean_guest_name(left).casefold() == clean_guest_name(right).casefold()
+
+
+def load_guest_name_detail(name_id: int) -> dict | None:
+    db = get_db()
+    guest = db.execute(
+        """
+        SELECT id, name, created_at, last_seen_at
+        FROM guest_names
+        WHERE id = ? AND name != ? COLLATE NOCASE
+        """,
+        (name_id, UNASSIGNED_RECIPIENT),
+    ).fetchone()
+    if guest is None:
+        return None
+
+    guest_name = guest["name"]
+    history_rows = db.execute(
+        """
+        SELECT
+            order_items.id,
+            order_items.order_id,
+            order_items.menu_item_id,
+            order_items.name,
+            order_items.category,
+            order_items.quantity,
+            order_items.recipient_name,
+            order_items.recipe,
+            order_items.alcohol_ml,
+            order_items.alcohol_grams,
+            order_items.completed_at,
+            orders.guest_name AS orderer_name,
+            orders.note,
+            orders.status,
+            orders.submitted_at,
+            CASE
+                WHEN orders.submitted_at >= datetime('now', '-4 hours') THEN 1
+                ELSE 0
+            END AS is_recent
+        FROM order_items
+        JOIN orders ON orders.id = order_items.order_id
+        WHERE order_items.recipient_name = ? COLLATE NOCASE
+            OR orders.guest_name = ? COLLATE NOCASE
+        ORDER BY orders.submitted_at DESC, orders.id DESC, order_items.id DESC
+        """,
+        (guest_name, guest_name),
+    ).fetchall()
+
+    stats = {
+        "items_for_guest": 0,
+        "orders_for_guest": set(),
+        "self_items": 0,
+        "by_others_items": 0,
+        "ordered_for_others_items": 0,
+        "recent_items_4h": 0,
+        "alcohol_ml": Decimal("0"),
+        "alcohol_grams": Decimal("0"),
+    }
+    history = []
+    for row in history_rows:
+        for_guest = same_guest_name(row["recipient_name"], guest_name)
+        by_guest = same_guest_name(row["orderer_name"], guest_name)
+        quantity = row["quantity"] or 0
+        alcohol_ml = Decimal(str(row["alcohol_ml"] or 0))
+        alcohol_grams = Decimal(str(row["alcohol_grams"] or 0))
+        if for_guest:
+            stats["items_for_guest"] += quantity
+            stats["orders_for_guest"].add(row["order_id"])
+            stats["alcohol_ml"] += alcohol_ml
+            stats["alcohol_grams"] += alcohol_grams
+            if row["is_recent"]:
+                stats["recent_items_4h"] += quantity
+            if by_guest:
+                stats["self_items"] += quantity
+            else:
+                stats["by_others_items"] += quantity
+        elif by_guest:
+            stats["ordered_for_others_items"] += quantity
+
+        if for_guest and by_guest:
+            relationship = "For self"
+        elif for_guest:
+            relationship = f"Ordered by {guest_name_label(row['orderer_name'])}"
+        else:
+            relationship = f"For {guest_name_label(row['recipient_name'])}"
+
+        history.append(
+            {
+                "id": row["id"],
+                "order_id": row["order_id"],
+                "menu_item_id": row["menu_item_id"],
+                "name": row["name"],
+                "category": row["category"],
+                "quantity": row["quantity"],
+                "recipient_name": guest_name_label(row["recipient_name"]),
+                "orderer_name": row["orderer_name"],
+                "relationship": relationship,
+                "recipe": parse_recipe_json(row["recipe"]),
+                "alcohol_ml": rounded_float(alcohol_ml),
+                "alcohol_grams": rounded_float(alcohol_grams),
+                "standard_drinks": standard_drinks(alcohol_grams),
+                "completed": row["completed_at"] is not None,
+                "note": row["note"],
+                "status": row["status"],
+                "submitted_at": iso_timestamp(row["submitted_at"]),
+            }
+        )
+
+    menu_items = db.execute(
+        f"""
+        SELECT id, name, category
+        FROM menu_items
+        WHERE available = 1 AND category != ? COLLATE NOCASE
+        ORDER BY {category_order_sql()}, sort_order, id
+        """,
+        (UNASSIGNED_CATEGORY,),
+    ).fetchall()
+
+    orders_for_guest = len(stats["orders_for_guest"])
+    alcohol_grams = stats["alcohol_grams"]
+    return {
+        "guest": {
+            "id": guest["id"],
+            "name": guest_name,
+            "created_at": iso_timestamp(guest["created_at"]),
+            "last_seen_at": iso_timestamp(guest["last_seen_at"]),
+        },
+        "stats": {
+            "orders_for_guest": orders_for_guest,
+            "items_for_guest": stats["items_for_guest"],
+            "self_items": stats["self_items"],
+            "by_others_items": stats["by_others_items"],
+            "ordered_for_others_items": stats["ordered_for_others_items"],
+            "recent_items_4h": stats["recent_items_4h"],
+            "pace_per_hour": rounded_float(
+                Decimal(str(stats["recent_items_4h"])) / Decimal("4")
+            ),
+            "alcohol_ml": rounded_float(stats["alcohol_ml"]),
+            "alcohol_grams": rounded_float(alcohol_grams),
+            "standard_drinks": standard_drinks(alcohol_grams),
+        },
+        "history": history,
+        "menu_items": [dict(row) for row in menu_items],
+    }
 
 
 def order_queue_summary() -> dict:
@@ -1416,6 +1649,7 @@ def order_queue_summary() -> dict:
             SUM(status = 'new') AS active_orders,
             SUM(status = 'completed') AS completed_orders,
             COALESCE(SUM(item_count), 0) AS total_items,
+            COALESCE(SUM(total_alcohol_ml), 0) AS total_alcohol_ml,
             COALESCE(SUM(total_alcohol_grams), 0) AS total_alcohol_grams
         FROM orders
         """
@@ -1425,6 +1659,7 @@ def order_queue_summary() -> dict:
         "active_orders": row["active_orders"] or 0,
         "completed_orders": row["completed_orders"] or 0,
         "total_items": row["total_items"] or 0,
+        "total_alcohol_ml": rounded_float(Decimal(str(row["total_alcohol_ml"] or 0))),
         "total_alcohol_grams": rounded_float(Decimal(str(row["total_alcohol_grams"] or 0))),
         "standard_drinks": standard_drinks(row["total_alcohol_grams"] or 0),
     }
@@ -1436,6 +1671,7 @@ def build_guest_alcohol_timeline(db: sqlite3.Connection) -> dict:
         SELECT
             recipient_name AS guest_name,
             SUBSTR(submitted_at, 1, 13) || ':00' AS hour,
+            COALESCE(SUM(alcohol_ml), 0) AS alcohol_ml,
             COALESCE(SUM(alcohol_grams), 0) AS alcohol_grams
         FROM (
             SELECT
@@ -1444,10 +1680,11 @@ def build_guest_alcohol_timeline(db: sqlite3.Connection) -> dict:
                     ELSE order_items.recipient_name
                 END AS recipient_name,
                 orders.submitted_at,
+                order_items.alcohol_ml,
                 order_items.alcohol_grams
             FROM order_items
             JOIN orders ON orders.id = order_items.order_id
-            WHERE order_items.alcohol_grams > 0
+            WHERE order_items.alcohol_ml > 0
         )
         GROUP BY recipient_name COLLATE NOCASE, hour
         ORDER BY hour, guest_name COLLATE NOCASE
@@ -1459,36 +1696,46 @@ def build_guest_alcohol_timeline(db: sqlite3.Connection) -> dict:
 
     hours = sorted({row["hour"] for row in rows})
     labels = [iso_timestamp(hour) for hour in hours]
-    totals: dict[str, Decimal] = {}
-    by_guest_hour: dict[str, dict[str, Decimal]] = {}
+    totals_ml: dict[str, Decimal] = {}
+    totals_grams: dict[str, Decimal] = {}
+    by_guest_hour: dict[str, dict[str, tuple[Decimal, Decimal]]] = {}
     for row in rows:
         guest_name = row["guest_name"]
+        alcohol_ml = Decimal(str(row["alcohol_ml"] or 0))
         grams = Decimal(str(row["alcohol_grams"] or 0))
-        totals[guest_name] = totals.get(guest_name, Decimal("0")) + grams
-        by_guest_hour.setdefault(guest_name, {})[row["hour"]] = grams
+        totals_ml[guest_name] = totals_ml.get(guest_name, Decimal("0")) + alcohol_ml
+        totals_grams[guest_name] = totals_grams.get(guest_name, Decimal("0")) + grams
+        by_guest_hour.setdefault(guest_name, {})[row["hour"]] = (alcohol_ml, grams)
 
     top_guest_names = sorted(
-        totals,
-        key=lambda guest_name: (-totals[guest_name], guest_name.casefold()),
+        totals_ml,
+        key=lambda guest_name: (-totals_ml[guest_name], guest_name.casefold()),
     )[:6]
     series = []
     for guest_name in top_guest_names:
-        cumulative = Decimal("0")
+        cumulative_ml = Decimal("0")
+        cumulative_grams = Decimal("0")
         points = []
         for hour in hours:
-            cumulative += by_guest_hour.get(guest_name, {}).get(hour, Decimal("0"))
+            hour_ml, hour_grams = by_guest_hour.get(guest_name, {}).get(
+                hour, (Decimal("0"), Decimal("0"))
+            )
+            cumulative_ml += hour_ml
+            cumulative_grams += hour_grams
             points.append(
                 {
                     "hour": iso_timestamp(hour),
-                    "alcohol_grams": rounded_float(cumulative),
-                    "standard_drinks": standard_drinks(cumulative),
+                    "alcohol_ml": rounded_float(cumulative_ml),
+                    "alcohol_grams": rounded_float(cumulative_grams),
+                    "standard_drinks": standard_drinks(cumulative_grams),
                 }
             )
         series.append(
             {
                 "guest_name": guest_name,
-                "alcohol_grams": rounded_float(totals[guest_name]),
-                "standard_drinks": standard_drinks(totals[guest_name]),
+                "alcohol_ml": rounded_float(totals_ml[guest_name]),
+                "alcohol_grams": rounded_float(totals_grams[guest_name]),
+                "standard_drinks": standard_drinks(totals_grams[guest_name]),
                 "points": points,
             }
         )
@@ -1504,7 +1751,30 @@ def build_order_stats() -> dict:
             recipient_name AS guest_name,
             COUNT(DISTINCT order_id) AS orders,
             COALESCE(SUM(quantity), 0) AS items,
+            COALESCE(SUM(alcohol_ml), 0) AS alcohol_ml,
             COALESCE(SUM(alcohol_grams), 0) AS alcohol_grams,
+            COALESCE(SUM(
+                CASE
+                    WHEN submitted_at >= datetime('now', '-4 hours') THEN quantity
+                    ELSE 0
+                END
+            ), 0) AS recent_items_4h,
+            COUNT(DISTINCT
+                CASE
+                    WHEN submitted_at >= datetime('now', '-4 hours') THEN order_id
+                END
+            ) AS recent_orders_4h,
+            COALESCE(SUM(
+                CASE
+                    WHEN orderer_name COLLATE NOCASE = recipient_name THEN quantity
+                    ELSE 0
+                END
+            ), 0) AS self_items,
+            COUNT(DISTINCT
+                CASE
+                    WHEN orderer_name COLLATE NOCASE = recipient_name THEN order_id
+                END
+            ) AS self_orders,
             MIN(submitted_at) AS first_order_at,
             MAX(submitted_at) AS last_order_at
         FROM (
@@ -1513,8 +1783,10 @@ def build_order_stats() -> dict:
                     WHEN TRIM(order_items.recipient_name) = '' THEN ?
                     ELSE order_items.recipient_name
                 END AS recipient_name,
+                orders.guest_name AS orderer_name,
                 order_items.order_id,
                 order_items.quantity,
+                order_items.alcohol_ml,
                 order_items.alcohol_grams,
                 orders.submitted_at
             FROM order_items
@@ -1531,6 +1803,7 @@ def build_order_stats() -> dict:
             name,
             category,
             COALESCE(SUM(quantity), 0) AS quantity,
+            COALESCE(SUM(alcohol_ml), 0) AS alcohol_ml,
             COALESCE(SUM(alcohol_grams), 0) AS alcohol_grams
         FROM order_items
         GROUP BY name, category
@@ -1543,7 +1816,8 @@ def build_order_stats() -> dict:
         SELECT
             SUBSTR(submitted_at, 1, 13) || ':00' AS hour,
             COUNT(*) AS orders,
-            COALESCE(SUM(item_count), 0) AS items
+            COALESCE(SUM(item_count), 0) AS items,
+            COALESCE(SUM(total_alcohol_ml), 0) AS alcohol_ml
         FROM orders
         GROUP BY hour
         ORDER BY hour
@@ -1554,6 +1828,7 @@ def build_order_stats() -> dict:
         SELECT
             category,
             COALESCE(SUM(quantity), 0) AS quantity,
+            COALESCE(SUM(alcohol_ml), 0) AS alcohol_ml,
             COALESCE(SUM(alcohol_grams), 0) AS alcohol_grams
         FROM order_items
         GROUP BY category
@@ -1577,8 +1852,14 @@ def build_order_stats() -> dict:
             "guest_name": row["guest_name"],
             "orders": row["orders"],
             "items": row["items"],
+            "alcohol_ml": rounded_float(Decimal(str(row["alcohol_ml"] or 0))),
             "alcohol_grams": rounded_float(Decimal(str(row["alcohol_grams"] or 0))),
             "standard_drinks": standard_drinks(row["alcohol_grams"] or 0),
+            "recent_items_4h": row["recent_items_4h"] or 0,
+            "recent_orders_4h": row["recent_orders_4h"] or 0,
+            "self_items": row["self_items"] or 0,
+            "self_orders": row["self_orders"] or 0,
+            "by_others_items": (row["items"] or 0) - (row["self_items"] or 0),
             "first_order_at": iso_timestamp(row["first_order_at"]),
             "last_order_at": iso_timestamp(row["last_order_at"]),
         }
@@ -1589,6 +1870,7 @@ def build_order_stats() -> dict:
             "name": row["name"],
             "category": row["category"],
             "quantity": row["quantity"],
+            "alcohol_ml": rounded_float(Decimal(str(row["alcohol_ml"] or 0))),
             "alcohol_grams": rounded_float(Decimal(str(row["alcohol_grams"] or 0))),
             "standard_drinks": standard_drinks(row["alcohol_grams"] or 0),
         }
@@ -1599,6 +1881,7 @@ def build_order_stats() -> dict:
             "hour": iso_timestamp(row["hour"]),
             "orders": row["orders"],
             "items": row["items"],
+            "alcohol_ml": rounded_float(Decimal(str(row["alcohol_ml"] or 0))),
         }
         for row in hour_rows
     ]
@@ -1606,6 +1889,7 @@ def build_order_stats() -> dict:
         {
             "category": row["category"],
             "quantity": row["quantity"],
+            "alcohol_ml": rounded_float(Decimal(str(row["alcohol_ml"] or 0))),
             "alcohol_grams": rounded_float(Decimal(str(row["alcohol_grams"] or 0))),
             "standard_drinks": standard_drinks(row["alcohol_grams"] or 0),
         }
@@ -2165,6 +2449,87 @@ def register_routes(app: Flask) -> None:
     @host_required
     def host_names():
         return render_template("host_names.html", guest_names=load_guest_names())
+
+    @app.get("/host/names/<int:name_id>")
+    @host_required
+    def host_name_detail(name_id: int):
+        detail = load_guest_name_detail(name_id)
+        if detail is None:
+            abort(404)
+        return render_template("host_name_detail.html", **detail)
+
+    @app.post("/host/names/<int:name_id>/add-drink")
+    @host_required
+    def add_guest_drink(name_id: int):
+        detail = load_guest_name_detail(name_id)
+        if detail is None:
+            abort(404)
+
+        menu_item_id = request.form.get("menu_item_id", type=int)
+        quantity = request.form.get("quantity", type=int) or 1
+        if quantity < 1 or quantity > MAX_BASKET_QUANTITY:
+            flash(f"Choose between 1 and {MAX_BASKET_QUANTITY} drinks.", "error")
+            return redirect(url_for("host_name_detail", name_id=name_id))
+
+        item = get_db().execute(
+            """
+            SELECT id, name, category, recipe
+            FROM menu_items
+            WHERE id = ?
+                AND available = 1
+                AND category != ? COLLATE NOCASE
+            """,
+            (menu_item_id, UNASSIGNED_CATEGORY),
+        ).fetchone()
+        if item is None:
+            flash("Choose an available menu item.", "error")
+            return redirect(url_for("host_name_detail", name_id=name_id))
+
+        guest_name = detail["guest"]["name"]
+        create_order(
+            guest_name,
+            "Added by host from the names page.",
+            [
+                {
+                    "id": item["id"],
+                    "name": item["name"],
+                    "category": item["category"],
+                    "quantity": quantity,
+                    "recipients": [guest_name] * quantity,
+                    "recipe": parse_recipe_json(item["recipe"]),
+                }
+            ],
+            "single",
+        )
+        flash(f"Added {quantity}x {item['name']} for {guest_name}.", "success")
+        return redirect(url_for("host_name_detail", name_id=name_id))
+
+    @app.post("/host/names/<int:name_id>/items/<int:item_id>/delete")
+    @host_required
+    def remove_guest_drink(name_id: int, item_id: int):
+        detail = load_guest_name_detail(name_id)
+        if detail is None:
+            abort(404)
+        guest_name = detail["guest"]["name"]
+        item = get_db().execute(
+            """
+            SELECT order_items.id, order_items.name
+            FROM order_items
+            JOIN orders ON orders.id = order_items.order_id
+            WHERE order_items.id = ?
+                AND (
+                    order_items.recipient_name = ? COLLATE NOCASE
+                    OR orders.guest_name = ? COLLATE NOCASE
+                )
+            """,
+            (item_id, guest_name, guest_name),
+        ).fetchone()
+        if item is None:
+            abort(404)
+        remove_one_order_item(item_id)
+        get_db().commit()
+        flash(f"Removed one {item['name']}.", "success")
+        return redirect(url_for("host_name_detail", name_id=name_id))
 
     @app.post("/host/names/<int:name_id>/delete")
     @host_required

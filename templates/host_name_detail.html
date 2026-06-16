@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+
+{% block title %}{{ guest['name'] }} · Guest history{% endblock %}
+{% block body_class %}host-page{% endblock %}
+
+{% block body %}
+  <header class="host-header">
+    <a class="host-brand" href="{{ url_for('host_editor') }}">Tonight's Menu <span>/ Host</span></a>
+    <div class="host-header-actions">
+      <a href="{{ url_for('host_editor') }}">Editor</a>
+      <a href="{{ url_for('host_orders') }}">Orders</a>
+      <a href="{{ url_for('host_stats') }}">Stats</a>
+      <a class="active" aria-current="page" href="{{ url_for('host_names') }}">Names</a>
+      <a href="{{ url_for('menu') }}" target="_blank" rel="noopener">View menu</a>
+      <form method="post" action="{{ url_for('host_logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="link-button" type="submit">Log out</button>
+      </form>
+    </div>
+  </header>
+
+  <main class="host-dashboard">
+    <div class="host-dashboard-title">
+      <div>
+        <p class="mobile-section-number">04</p>
+        <h1>{{ guest['name'] }}</h1>
+        <p>Drinks ordered for this guest and drinks this guest ordered for other people.</p>
+      </div>
+      <a class="button button-outline" href="{{ url_for('host_names') }}">All names</a>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="flash {{ category }}" role="status">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    <section class="dashboard-summary stats-summary" aria-label="{{ guest['name'] }} summary">
+      <div><span>{{ stats['orders_for_guest'] }}</span><small>Orders for them</small></div>
+      <div><span>{{ stats['items_for_guest'] }}</span><small>Drinks for them</small></div>
+      <div><span>{{ "%.1f"|format(stats['alcohol_ml']) }}</span><small>Pure alcohol ml</small></div>
+      <div><span>{{ "%.2f"|format(stats['pace_per_hour']) }}</span><small>Drinks/hr, last 4h</small></div>
+    </section>
+
+    <section class="guest-detail-grid">
+      <article class="stats-panel">
+        <div class="stats-panel-heading">
+          <h2>Name stats</h2>
+          <p>Self orders, drinks from others, and drinks ordered for someone else.</p>
+        </div>
+        <div class="fun-grid">
+          <div class="fun-card">
+            <small>For self</small>
+            <strong>{{ stats['self_items'] }}</strong>
+            <span>drinks this person ordered for themselves</span>
+          </div>
+          <div class="fun-card">
+            <small>By others</small>
+            <strong>{{ stats['by_others_items'] }}</strong>
+            <span>drinks other people ordered for this person</span>
+          </div>
+          <div class="fun-card">
+            <small>Ordered out</small>
+            <strong>{{ stats['ordered_for_others_items'] }}</strong>
+            <span>drinks this person ordered for others</span>
+          </div>
+          <div class="fun-card">
+            <small>Last 4h</small>
+            <strong>{{ stats['recent_items_4h'] }}</strong>
+            <span>drinks counted for recent pace</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="stats-panel">
+        <div class="stats-panel-heading">
+          <h2>Add drink</h2>
+          <p>Adds a new host-created order assigned to this guest.</p>
+        </div>
+        {% if menu_items %}
+          <form class="guest-add-form" method="post" action="{{ url_for('add_guest_drink', name_id=guest['id']) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label>Drink
+              <select name="menu_item_id" required>
+                {% for item in menu_items %}
+                  <option value="{{ item['id'] }}">{{ item['name'] }} · {{ item['category'] }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>Qty
+              <input name="quantity" type="number" min="1" max="20" value="1" inputmode="numeric">
+            </label>
+            <button class="button button-dark" type="submit">Add drink</button>
+          </form>
+        {% else %}
+          <p class="dashboard-empty">No available menu items can be added.</p>
+        {% endif %}
+      </article>
+    </section>
+
+    <section class="stats-panel full-stats-panel guest-history-panel">
+      <div class="stats-panel-heading">
+        <h2>Order history</h2>
+        <p>Changes here use the same order rows as the queue, history, and stats.</p>
+      </div>
+      {% if history %}
+        <div class="guest-history-list">
+          {% for item in history %}
+            <article class="guest-history-row">
+              <div>
+                <strong>{{ item['quantity'] }}x {{ item['name'] }}</strong>
+                <small>{{ item['relationship'] }} · {{ item['category'] }} · {{ item['status'] }} · {{ item['submitted_at'].replace('T', ' ').replace('Z', '') if item['submitted_at'] else '' }}</small>
+                {% if item['recipe'] %}
+                  <ul class="order-recipe">
+                    {% for ingredient in item['recipe'] %}
+                      <li>{% if ingredient.get('ml') %}{{ ingredient['ml'] }} ml {% endif %}{{ ingredient['name'] }}{% if ingredient.get('abv') %} <span>{{ ingredient['abv'] }}% ABV</span>{% endif %}</li>
+                    {% endfor %}
+                  </ul>
+                {% else %}
+                  <p class="order-no-recipe">No recipe saved for this item.</p>
+                {% endif %}
+              </div>
+              <div class="guest-history-meta">
+                <span>{{ "%.1f"|format(item['alcohol_ml']) }} ml alcohol</span>
+                <form method="post" action="{{ url_for('remove_guest_drink', name_id=guest['id'], item_id=item['id']) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="icon-button" type="submit">Remove one</button>
+                </form>
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="dashboard-empty">No order history for this name yet.</p>
+      {% endif %}
+    </section>
+  </main>
+{% endblock %}

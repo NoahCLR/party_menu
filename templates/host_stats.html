@@ -9,6 +9,7 @@
     <div class="host-header-actions">
       <a href="{{ url_for('host_editor') }}">Editor</a>
       <a href="{{ url_for('host_orders') }}">Orders</a>
+      <a class="active" aria-current="page" href="{{ url_for('host_stats') }}">Stats</a>
       <a href="{{ url_for('host_names') }}">Names</a>
       <a href="{{ url_for('menu') }}" target="_blank" rel="noopener">View menu</a>
       <form method="post" action="{{ url_for('host_logout') }}">
@@ -32,7 +33,7 @@
       <div><span id="stats-total-orders">0</span><small>Total orders</small></div>
       <div><span id="stats-total-items">0</span><small>Items served</small></div>
       <div><span id="stats-active-orders">0</span><small>Active now</small></div>
-      <div><span id="stats-standard-drinks">0.00</span><small>Est. drinks</small></div>
+      <div><span id="stats-alcohol-ml">0</span><small>Pure alcohol ml</small></div>
     </section>
 
     <section id="highlight-stats" class="highlight-grid" aria-label="Tonight's highlights"></section>
@@ -41,7 +42,13 @@
       <article class="stats-panel full-stats-panel">
         <div class="stats-panel-heading">
           <h2>Rush graph</h2>
-          <p>Hourly order pressure across the current history.</p>
+          <p>Order pressure over the selected time range.</p>
+          <div class="stats-range-control" role="group" aria-label="Rush graph range">
+            <button class="active" type="button" data-timeline-range="4">4h</button>
+            <button type="button" data-timeline-range="8">8h</button>
+            <button type="button" data-timeline-range="12">12h</button>
+            <button type="button" data-timeline-range="all">All</button>
+          </div>
         </div>
         <div id="timeline-graph" class="timeline-graph"></div>
         <div id="timeline-stats" class="timeline-list compact-timeline-list"></div>
@@ -50,7 +57,7 @@
       <article class="stats-panel full-stats-panel">
         <div class="stats-panel-heading">
           <h2>Guest alcohol</h2>
-          <p>Cumulative estimated drinks by guest over the night.</p>
+          <p>Cumulative pure alcohol ml by guest over the night.</p>
         </div>
         <div id="guest-alcohol-graph" class="guest-alcohol-graph"></div>
       </article>
@@ -58,7 +65,7 @@
       <article class="stats-panel">
         <div class="stats-panel-heading">
           <h2>Guest board</h2>
-          <p>Items, estimated drinks, and current ordering pace.</p>
+          <p>Alcohol ml, recent pace, and who drinks were for.</p>
         </div>
         <div class="stats-table-wrap">
           <table class="stats-table">
@@ -67,7 +74,9 @@
                 <th>Guest</th>
                 <th>Orders</th>
                 <th>Items</th>
-                <th>Est. drinks</th>
+                <th>Alcohol ml</th>
+                <th>For self</th>
+                <th>By others</th>
                 <th>Pace</th>
               </tr>
             </thead>

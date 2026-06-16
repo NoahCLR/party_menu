@@ -7,6 +7,7 @@
   <header class="host-header">
     <a class="host-brand" href="{{ url_for('host_editor') }}">Tonight's Menu <span>/ Host</span></a>
     <div class="host-header-actions">
+      <a class="active" aria-current="page" href="{{ url_for('host_editor') }}">Editor</a>
       <a href="{{ url_for('host_orders') }}">Orders</a>
       <a href="{{ url_for('host_stats') }}">Stats</a>
       <a href="{{ url_for('host_names') }}">Names</a>

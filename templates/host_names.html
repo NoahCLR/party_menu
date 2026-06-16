@@ -10,7 +10,7 @@
       <a href="{{ url_for('host_editor') }}">Editor</a>
       <a href="{{ url_for('host_orders') }}">Orders</a>
       <a href="{{ url_for('host_stats') }}">Stats</a>
-      <a href="{{ url_for('host_names') }}">Names</a>
+      <a class="active" aria-current="page" href="{{ url_for('host_names') }}">Names</a>
       <a href="{{ url_for('menu') }}" target="_blank" rel="noopener">View menu</a>
       <form method="post" action="{{ url_for('host_logout') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -43,17 +43,17 @@
               <th>Name</th>
               <th>Orders</th>
               <th>Items</th>
-              <th>Est. drinks</th>
+              <th>Alcohol ml</th>
               <th>Action</th>
             </tr>
           </thead>
           <tbody>
             {% for guest in guest_names %}
               <tr>
-                <td data-label="Name"><strong>{{ guest['name'] }}</strong></td>
+                <td data-label="Name"><a class="guest-name-link" href="{{ url_for('host_name_detail', name_id=guest['id']) }}">{{ guest['name'] }}</a></td>
                 <td data-label="Orders">{{ guest['orders'] }}</td>
                 <td data-label="Items">{{ guest['items'] }}</td>
-                <td data-label="Est. drinks">{{ "%.2f"|format(guest['standard_drinks']) }}</td>
+                <td data-label="Alcohol ml">{{ "%.1f"|format(guest['alcohol_ml']) }}</td>
                 <td data-label="Action">
                   <form method="post" action="{{ url_for('delete_guest_name', name_id=guest['id']) }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

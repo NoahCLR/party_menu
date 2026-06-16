@@ -563,6 +563,94 @@ class MenuAppTestCase(unittest.TestCase):
             [("Noah", 1), ("Unassigned", 1)],
         )
 
+    def test_host_name_detail_can_add_and_remove_drinks(self):
+        with self.app.app_context():
+            from app import create_order
+            from app import get_db
+
+            db = get_db()
+            item = db.execute(
+                """
+                SELECT id, name, category
+                FROM menu_items
+                WHERE name = 'Moscow Mule'
+                """
+            ).fetchone()
+            recipe = [
+                {"name": "Vodka", "ml": "50", "abv": "40"},
+                {"name": "Ginger beer", "ml": "120"},
+            ]
+            db.execute(
+                "UPDATE menu_items SET recipe = ? WHERE id = ?",
+                (json.dumps(recipe), item["id"]),
+            )
+            db.commit()
+            create_order(
+                "Noah",
+                "",
+                [
+                    {
+                        "id": item["id"],
+                        "name": item["name"],
+                        "category": item["category"],
+                        "quantity": 2,
+                        "recipients": ["Noah", "Mila"],
+                        "recipe": recipe,
+                    }
+                ],
+                "basket",
+            )
+
+        self.login()
+        names_page = self.client.get("/host/names")
+        detail_match = re.search(
+            rb'<a class="guest-name-link" href="(/host/names/\d+)">Mila</a>',
+            names_page.data,
+        )
+        self.assertIsNotNone(detail_match)
+        detail_path = detail_match.group(1).decode()
+
+        detail = self.client.get(detail_path)
+        self.assertIn(b"Ordered by Noah", detail.data)
+        self.assertIn(b"Moscow Mule", detail.data)
+        self.assertIn(b"Add drink", detail.data)
+        self.assertIn(b"By others", detail.data)
+
+        add_token = self.token_from(detail_path)
+        add_response = self.client.post(
+            f"{detail_path}/add-drink",
+            data={
+                "csrf_token": add_token,
+                "menu_item_id": item["id"],
+                "quantity": "2",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn(b"Added 2x Moscow Mule for Mila.", add_response.data)
+        stats = self.client.get("/host/stats.json").json["stats"]
+        mila_stats = next(guest for guest in stats["guests"] if guest["guest_name"] == "Mila")
+        self.assertEqual(mila_stats["items"], 3)
+        self.assertEqual(mila_stats["self_items"], 2)
+        self.assertEqual(mila_stats["by_others_items"], 1)
+        self.assertAlmostEqual(mila_stats["alcohol_ml"], 60.0)
+
+        remove_match = re.search(
+            rb'action="(/host/names/\d+/items/\d+/delete)"',
+            add_response.data,
+        )
+        self.assertIsNotNone(remove_match)
+        remove_token = self.token_from(detail_path)
+        remove_response = self.client.post(
+            remove_match.group(1).decode(),
+            data={"csrf_token": remove_token},
+            follow_redirects=True,
+        )
+        self.assertIn(b"Removed one Moscow Mule.", remove_response.data)
+        stats = self.client.get("/host/stats.json").json["stats"]
+        mila_stats = next(guest for guest in stats["guests"] if guest["guest_name"] == "Mila")
+        self.assertEqual(mila_stats["items"], 2)
+        self.assertAlmostEqual(mila_stats["alcohol_ml"], 40.0)
+
     def test_basket_checkout_rejects_invalid_quantities(self):
         with self.app.app_context():
             from app import get_db
@@ -910,8 +998,13 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(b'id="category-stats"', stats_page.data)
         stats_json = self.client.get("/host/stats.json").json["stats"]
         self.assertEqual(stats_json["summary"]["total_orders"], 1)
+        self.assertAlmostEqual(stats_json["summary"]["total_alcohol_ml"], 16.0)
         self.assertEqual(stats_json["guests"][0]["guest_name"], "Mila")
+        self.assertAlmostEqual(stats_json["guests"][0]["alcohol_ml"], 16.0)
         self.assertAlmostEqual(stats_json["guests"][0]["standard_drinks"], 1.26)
+        self.assertEqual(stats_json["guests"][0]["recent_items_4h"], 1)
+        self.assertEqual(stats_json["guests"][0]["self_items"], 1)
+        self.assertEqual(stats_json["guests"][0]["by_others_items"], 0)
         self.assertEqual(stats_json["highlights"]["unique_guests"], 1)
         self.assertEqual(stats_json["highlights"]["top_guest"]["guest_name"], "Mila")
         self.assertEqual(stats_json["highlights"]["top_item"]["name"], "Espresso Martini")
@@ -921,13 +1014,20 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertAlmostEqual(stats_json["highlights"]["completion_rate"], 0.0)
         guest_alcohol = stats_json["guest_alcohol_timeline"]
         self.assertEqual(guest_alcohol["series"][0]["guest_name"], "Mila")
+        self.assertAlmostEqual(guest_alcohol["series"][0]["alcohol_ml"], 16.0)
         self.assertAlmostEqual(guest_alcohol["series"][0]["standard_drinks"], 1.26)
+        self.assertAlmostEqual(
+            guest_alcohol["series"][0]["points"][0]["alcohol_ml"],
+            16.0,
+        )
         self.assertAlmostEqual(
             guest_alcohol["series"][0]["points"][0]["standard_drinks"],
             1.26,
         )
         self.assertEqual(stats_json["categories"][0]["category"], "Cocktails")
+        self.assertAlmostEqual(stats_json["categories"][0]["alcohol_ml"], 16.0)
         self.assertEqual(stats_json["timeline"][0]["items"], 1)
+        self.assertAlmostEqual(stats_json["timeline"][0]["alcohol_ml"], 16.0)
 
         host_token = self.token_from("/host/orders")
         order_id = queue_json["orders"][0]["id"]
@@ -983,7 +1083,9 @@ class MenuAppTestCase(unittest.TestCase):
             [{"name": "Vodka", "ml": "40", "abv": "40"}],
         )
         stats_json = self.client.get("/host/stats.json").json["stats"]
+        self.assertAlmostEqual(stats_json["summary"]["total_alcohol_ml"], 16.0)
         self.assertAlmostEqual(stats_json["summary"]["standard_drinks"], 1.26)
+        self.assertAlmostEqual(stats_json["guests"][0]["alcohol_ml"], 16.0)
         self.assertAlmostEqual(stats_json["guests"][0]["standard_drinks"], 1.26)
 
 
@@ -996,8 +1098,16 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(b"Search name, description, category, or recipe", response.data)
         self.assertIn(b'id="single-serve-recipe"', response.data)
         self.assertIn(b"Single serving", response.data)
+        self.assertIn(b'aria-current="page" href="/host">Editor', response.data)
         self.assertIn(b"data-host-row", response.data)
         self.assertIn(b'id="host-search-empty"', response.data)
+
+        stats_response = self.client.get("/host/stats")
+        self.assertIn(b"Pure alcohol ml", stats_response.data)
+        self.assertIn(b'data-timeline-range="4"', stats_response.data)
+        self.assertIn(b'aria-current="page" href="/host/stats">Stats', stats_response.data)
+        orders_response = self.client.get("/host/orders")
+        self.assertIn(b"Alcohol ml", orders_response.data)
 
         stylesheet_response = self.client.get("/static/styles.css")
         stylesheet = stylesheet_response.text
@@ -1015,6 +1125,11 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(".public-flash.is-dismissing,", stylesheet)
         self.assertIn(".name-input-clear", stylesheet)
         self.assertIn(".recipe-single-button", stylesheet)
+        self.assertIn(".stats-range-control", stylesheet)
+        self.assertIn(".rush-line", stylesheet)
+        self.assertIn(".category-pie", stylesheet)
+        self.assertIn(".guest-line-detail", stylesheet)
+        self.assertIn(".recipe-row-controls", stylesheet)
 
         name_suggestions_response = self.client.get("/static/js/name-suggestions.js")
         name_suggestions = name_suggestions_response.text
@@ -1027,6 +1142,21 @@ class MenuAppTestCase(unittest.TestCase):
         host_js_response.close()
         self.assertIn("single-serve-recipe", host_js)
         self.assertIn("renderRecipe([{ name: itemName", host_js)
+        self.assertIn("data-recipe-move", host_js)
+        self.assertIn("order-button recipe-move-button", host_js)
+
+        host_stats_response = self.client.get("/static/js/host-stats.js")
+        host_stats = host_stats_response.text
+        host_stats_response.close()
+        self.assertIn("activeTimelineRange", host_stats)
+        self.assertIn("category-pie", host_stats)
+        self.assertIn("alcohol_ml", host_stats)
+
+        host_orders_response = self.client.get("/static/js/host-orders.js")
+        host_orders = host_orders_response.text
+        host_orders_response.close()
+        self.assertIn("total_alcohol_ml", host_orders)
+        self.assertIn("ml pure alcohol", host_orders)
 
     def test_host_can_add_and_disable_item(self):
         self.login()

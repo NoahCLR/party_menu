@@ -163,6 +163,38 @@ function updateRecipeAddButton() {
   addRecipeIngredientButton.disabled = recipeList.children.length >= 20;
 }
 
+function updateRecipeControls() {
+  updateRecipeAddButton();
+  Array.from(recipeList.children).forEach((row, index, rows) => {
+    const upButton = row.querySelector('[data-recipe-move="up"]');
+    const downButton = row.querySelector('[data-recipe-move="down"]');
+    if (upButton) upButton.disabled = index === 0;
+    if (downButton) downButton.disabled = index === rows.length - 1;
+  });
+}
+
+function moveRecipeRow(row, direction) {
+  const sibling = direction === "up" ? row.previousElementSibling : row.nextElementSibling;
+  if (!sibling) return;
+  if (direction === "up") {
+    recipeList.insertBefore(row, sibling);
+  } else {
+    recipeList.insertBefore(sibling, row);
+  }
+  updateRecipeControls();
+  row.querySelector(`[data-recipe-move="${direction}"]`)?.focus();
+}
+
+function appendMoveIcon(button, direction) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 20 20");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", direction === "up" ? "M4 12.5 10 6l6 6.5" : "m4 7.5 6 6.5 6-6.5");
+  svg.append(path);
+  button.append(svg);
+}
+
 function addRecipeRow(ingredient = { name: "", ml: "" }) {
   const row = document.createElement("div");
   row.className = "recipe-row";
@@ -207,6 +239,25 @@ function addRecipeRow(ingredient = { name: "", ml: "" }) {
   abvInput.placeholder = "Optional";
   abvLabel.append(abvText, abvInput);
 
+  const controls = document.createElement("div");
+  controls.className = "recipe-row-controls order-controls";
+
+  const upButton = document.createElement("button");
+  upButton.type = "button";
+  upButton.className = "order-button recipe-move-button";
+  upButton.dataset.recipeMove = "up";
+  upButton.setAttribute("aria-label", `Move ${ingredient.name || "ingredient"} up`);
+  appendMoveIcon(upButton, "up");
+  upButton.addEventListener("click", () => moveRecipeRow(row, "up"));
+
+  const downButton = document.createElement("button");
+  downButton.type = "button";
+  downButton.className = "order-button recipe-move-button";
+  downButton.dataset.recipeMove = "down";
+  downButton.setAttribute("aria-label", `Move ${ingredient.name || "ingredient"} down`);
+  appendMoveIcon(downButton, "down");
+  downButton.addEventListener("click", () => moveRecipeRow(row, "down"));
+
   const removeButton = document.createElement("button");
   removeButton.type = "button";
   removeButton.className = "recipe-remove-button";
@@ -215,12 +266,13 @@ function addRecipeRow(ingredient = { name: "", ml: "" }) {
   removeButton.addEventListener("click", () => {
     row.remove();
     if (!recipeList.children.length) addRecipeRow();
-    updateRecipeAddButton();
+    updateRecipeControls();
   });
 
-  row.append(nameLabel, amountLabel, abvLabel, removeButton);
+  controls.append(upButton, downButton, removeButton);
+  row.append(nameLabel, amountLabel, abvLabel, controls);
   recipeList.append(row);
-  updateRecipeAddButton();
+  updateRecipeControls();
 }
 
 function renderRecipe(recipe = []) {

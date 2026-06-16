@@ -9,6 +9,7 @@
     <a class="host-brand" href="{{ url_for('host_editor') }}">Tonight's Menu <span>/ Host</span></a>
     <div class="host-header-actions">
       <a href="{{ url_for('host_editor') }}">Editor</a>
+      <a class="active" aria-current="page" href="{{ url_for('host_orders') }}">Orders</a>
       <a href="{{ url_for('host_stats') }}">Stats</a>
       <a href="{{ url_for('host_names') }}">Names</a>
       <a href="{{ url_for('menu') }}" target="_blank" rel="noopener">View menu</a>
@@ -35,7 +36,7 @@
       <div><span id="summary-active">{{ summary['active_orders'] }}</span><small>Active</small></div>
       <div><span id="summary-total">{{ summary['total_orders'] }}</span><small>Total orders</small></div>
       <div><span id="summary-items">{{ summary['total_items'] }}</span><small>Items</small></div>
-      <div><span id="summary-drinks">{{ "%.2f"|format(summary['standard_drinks']) }}</span><small>Est. drinks</small></div>
+      <div><span id="summary-drinks">{{ "%.1f"|format(summary['total_alcohol_ml']) }}</span><small>Alcohol ml</small></div>
     </section>
 
     <section class="queue-toolbar" aria-label="Queue controls">

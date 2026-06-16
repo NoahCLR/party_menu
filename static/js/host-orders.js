@@ -47,8 +47,8 @@ function orderItem(item) {
   const recipe = item.recipe?.length
     ? `<ul class="order-recipe">${item.recipe.map(recipeLine).join("")}</ul>`
     : '<p class="order-no-recipe">No recipe saved for this item.</p>';
-  const alcohol = item.standard_drinks > 0
-    ? `<span>${item.standard_drinks.toFixed(2)} est. drinks</span>`
+  const alcohol = item.alcohol_ml > 0
+    ? `<span>${Number(item.alcohol_ml).toFixed(1)} ml alcohol</span>`
     : "";
   const recipientClass = item.recipient_is_unassigned
     ? "order-recipient is-unassigned"
@@ -91,9 +91,9 @@ function orderCard(order) {
   const note = order.note
     ? `<p class="order-note">${escapeHtml(order.note)}</p>`
     : "";
-  const alcohol = order.standard_drinks > 0
-    ? `<span>${order.standard_drinks.toFixed(2)} est. drinks</span>`
-    : "<span>No alcohol estimate</span>";
+  const alcohol = order.total_alcohol_ml > 0
+    ? `<span>${Number(order.total_alcohol_ml).toFixed(1)} ml pure alcohol</span>`
+    : "<span>No alcohol data</span>";
   return `
     <article class="order-card" data-order-id="${order.id}">
       <div class="order-card-heading">
@@ -118,7 +118,7 @@ function updateSummary(summary) {
   document.querySelector("#summary-active").textContent = summary.active_orders;
   document.querySelector("#summary-total").textContent = summary.total_orders;
   document.querySelector("#summary-items").textContent = summary.total_items;
-  document.querySelector("#summary-drinks").textContent = Number(summary.standard_drinks).toFixed(2);
+  document.querySelector("#summary-drinks").textContent = Number(summary.total_alcohol_ml).toFixed(1);
 }
 
 function renderOrders() {
