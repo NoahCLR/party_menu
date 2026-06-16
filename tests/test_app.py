@@ -977,6 +977,13 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn("height: clamp(250px, 55vw, 300px);", stylesheet)
         self.assertIn(".image-focus-preview {", stylesheet)
         self.assertIn(".public-flash.is-dismissing,", stylesheet)
+        self.assertIn(".name-input-clear", stylesheet)
+
+        name_suggestions_response = self.client.get("/static/js/name-suggestions.js")
+        name_suggestions = name_suggestions_response.text
+        name_suggestions_response.close()
+        self.assertIn("Clear name", name_suggestions)
+        self.assertIn("name-input-wrap", name_suggestions)
 
     def test_host_can_add_and_disable_item(self):
         self.login()

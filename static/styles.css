@@ -599,6 +599,44 @@ img {
   min-height: 48px;
 }
 
+.name-input-wrap {
+  position: relative;
+  display: block;
+}
+
+.order-form .name-input-wrap input {
+  padding-right: 52px;
+}
+
+.name-input-clear {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 46px;
+  height: calc(100% - 2px);
+  min-height: 46px;
+  display: grid;
+  place-items: center;
+  color: var(--white);
+  background: var(--black);
+  border: 0;
+  border-left: 1px solid var(--gray-700);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.name-input-clear:hover,
+.name-input-clear:focus-visible {
+  color: var(--black);
+  background: var(--white);
+  outline: 0;
+}
+
+.name-input-clear[hidden] {
+  display: none;
+}
+
 .name-suggestions {
   display: flex;
   flex-wrap: wrap;

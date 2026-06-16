@@ -18,14 +18,38 @@ function createSuggestionButton(name, input, panel) {
   return button;
 }
 
+function createClearButton(input, renderSuggestions) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "name-input-clear";
+  button.setAttribute("aria-label", "Clear name");
+  button.innerHTML = '<span aria-hidden="true">&times;</span>';
+  button.hidden = input.value.length === 0;
+  button.addEventListener("click", () => {
+    input.value = "";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    renderSuggestions();
+    input.focus();
+  });
+  return button;
+}
+
 function enhanceNameInput(input) {
   if (input.dataset.nameSuggestionsReady === "true") return;
   input.dataset.nameSuggestionsReady = "true";
 
+  const wasFocused = document.activeElement === input;
+  const wrapper = document.createElement("div");
+  wrapper.className = "name-input-wrap";
+  input.insertAdjacentElement("beforebegin", wrapper);
+  wrapper.append(input);
+
   const panel = document.createElement("div");
   panel.className = "name-suggestions";
   panel.hidden = true;
-  input.insertAdjacentElement("afterend", panel);
+  wrapper.insertAdjacentElement("afterend", panel);
+
+  let clearButton;
 
   function renderSuggestions() {
     const query = normalizeName(input.value);
@@ -43,6 +67,16 @@ function enhanceNameInput(input) {
     panel.hidden = matches.length === 0;
   }
 
+  function updateClearButton() {
+    clearButton.hidden = input.value.length === 0;
+  }
+
+  clearButton = createClearButton(input, renderSuggestions);
+  wrapper.append(clearButton);
+  updateClearButton();
+  if (wasFocused) input.focus();
+
+  input.addEventListener("input", updateClearButton);
   input.addEventListener("input", renderSuggestions);
   input.addEventListener("focus", renderSuggestions);
   input.addEventListener("blur", () => {

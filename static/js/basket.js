@@ -176,6 +176,7 @@ guestNameInput.addEventListener("input", () => {
     if (input.dataset.defaultRecipient === "true") {
       input.value = nextGuestName;
       recipientDrafts.set(input.dataset.assignmentKey, nextGuestName);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
     }
   });
   lastGuestName = nextGuestName;
