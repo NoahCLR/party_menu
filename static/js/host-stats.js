@@ -4,6 +4,7 @@ const guestStats = document.querySelector("#guest-stats");
 const itemStats = document.querySelector("#item-stats");
 const timelineGraph = document.querySelector("#timeline-graph");
 const timelineStats = document.querySelector("#timeline-stats");
+const guestAlcoholGraph = document.querySelector("#guest-alcohol-graph");
 const categoryStats = document.querySelector("#category-stats");
 const funStats = document.querySelector("#fun-stats");
 
@@ -198,6 +199,78 @@ function renderTimeline(timeline) {
     : "";
 }
 
+function renderGuestAlcoholGraph(timeline = {}) {
+  const labels = timeline.labels || [];
+  const series = (timeline.series || [])
+    .filter((guest) => Number(guest.standard_drinks || 0) > 0 && guest.points?.length);
+  if (!labels.length || !series.length) {
+    guestAlcoholGraph.innerHTML = emptyState("No guest alcohol timeline yet.");
+    return;
+  }
+
+  const width = 720;
+  const height = 270;
+  const padding = { top: 24, right: 26, bottom: 44, left: 48 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const maxDrinks = Math.max(
+    1,
+    ...series.flatMap((guest) => guest.points.map((point) => Number(point.standard_drinks || 0))),
+  );
+  const xFor = (index) => {
+    if (labels.length === 1) return padding.left + plotWidth / 2;
+    return padding.left + (index / (labels.length - 1)) * plotWidth;
+  };
+  const yFor = (value) => padding.top + plotHeight - (Number(value || 0) / maxDrinks) * plotHeight;
+  const gridValues = [0, maxDrinks / 2, maxDrinks];
+  const labelEvery = Math.max(1, Math.ceil(labels.length / 5));
+  const axisLabels = labels
+    .map((label, index) => ({ label, index }))
+    .filter(({ index }) => index === 0 || index === labels.length - 1 || index % labelEvery === 0)
+    .map(({ label, index }) => `
+      <text x="${xFor(index)}" y="${height - 16}" text-anchor="middle">${escapeHtml(hourLabel(label))}</text>
+    `).join("");
+  const grid = gridValues.map((value) => {
+    const y = yFor(value);
+    return `
+      <line class="guest-line-grid" x1="${padding.left}" x2="${width - padding.right}" y1="${y}" y2="${y}"></line>
+      <text x="${padding.left - 10}" y="${y + 4}" text-anchor="end">${drinks(value)}</text>
+    `;
+  }).join("");
+  const lines = series.map((guest, guestIndex) => {
+    const points = guest.points
+      .map((point, index) => `${xFor(index)},${yFor(point.standard_drinks)}`)
+      .join(" ");
+    return `
+      <polyline class="guest-line guest-line-${guestIndex % 6}" points="${points}"></polyline>
+      ${guest.points.map((point, index) => `
+        <circle class="guest-line-point guest-line-${guestIndex % 6}" cx="${xFor(index)}" cy="${yFor(point.standard_drinks)}" r="4">
+          <title>${escapeHtml(guest.guest_name)}: ${drinks(point.standard_drinks)} est. drinks at ${escapeHtml(hourLabel(point.hour))}</title>
+        </circle>
+      `).join("")}
+    `;
+  }).join("");
+  const legend = series.map((guest, guestIndex) => `
+    <span>
+      <i class="guest-line-key guest-line-${guestIndex % 6}"></i>
+      ${escapeHtml(guest.guest_name)}
+      <b>${drinks(guest.standard_drinks)}</b>
+    </span>
+  `).join("");
+
+  guestAlcoholGraph.innerHTML = `
+    <div class="guest-line-wrap">
+      <svg class="guest-line-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Cumulative estimated drinks by guest over time">
+        <rect class="guest-line-bg" x="${padding.left}" y="${padding.top}" width="${plotWidth}" height="${plotHeight}"></rect>
+        ${grid}
+        ${lines}
+        ${axisLabels}
+      </svg>
+    </div>
+    <div class="guest-line-legend">${legend}</div>
+  `;
+}
+
 function renderCategories(categories) {
   const maxQuantity = Math.max(1, ...categories.map((category) => Number(category.quantity || 0)));
   categoryStats.innerHTML = categories.length
@@ -261,6 +334,7 @@ function renderStats() {
   renderHighlights(highlights);
   renderTimelineGraph(stats.timeline || []);
   renderGuests(stats.guests || []);
+  renderGuestAlcoholGraph(stats.guest_alcohol_timeline || {});
   renderItems(stats.items || []);
   renderTimeline(stats.timeline || []);
   renderCategories(stats.categories || []);

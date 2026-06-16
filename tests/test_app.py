@@ -904,6 +904,7 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(b"host-stats.js", stats_page.data)
         self.assertIn(b'id="highlight-stats"', stats_page.data)
         self.assertIn(b'id="timeline-graph"', stats_page.data)
+        self.assertIn(b'id="guest-alcohol-graph"', stats_page.data)
         self.assertIn(b'id="category-stats"', stats_page.data)
         stats_json = self.client.get("/host/stats.json").json["stats"]
         self.assertEqual(stats_json["summary"]["total_orders"], 1)
@@ -916,6 +917,13 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertEqual(stats_json["highlights"]["biggest_order"]["item_count"], 1)
         self.assertAlmostEqual(stats_json["highlights"]["avg_items_per_order"], 1.0)
         self.assertAlmostEqual(stats_json["highlights"]["completion_rate"], 0.0)
+        guest_alcohol = stats_json["guest_alcohol_timeline"]
+        self.assertEqual(guest_alcohol["series"][0]["guest_name"], "Mila")
+        self.assertAlmostEqual(guest_alcohol["series"][0]["standard_drinks"], 1.26)
+        self.assertAlmostEqual(
+            guest_alcohol["series"][0]["points"][0]["standard_drinks"],
+            1.26,
+        )
         self.assertEqual(stats_json["categories"][0]["category"], "Cocktails")
         self.assertEqual(stats_json["timeline"][0]["items"], 1)
 

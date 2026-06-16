@@ -1804,6 +1804,139 @@ img {
   border-right: 1px solid var(--black);
 }
 
+.guest-alcohol-graph {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.guest-line-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--black);
+  background:
+    repeating-linear-gradient(
+      to top,
+      var(--white) 0,
+      var(--white) 39px,
+      var(--gray-100) 40px
+    );
+}
+
+.guest-line-chart {
+  display: block;
+  width: 100%;
+  min-width: 680px;
+  height: auto;
+  color: var(--black);
+}
+
+.guest-line-chart text {
+  fill: var(--gray-500);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.guest-line-bg {
+  fill: transparent;
+}
+
+.guest-line-grid {
+  stroke: var(--gray-300);
+  stroke-width: 1;
+}
+
+.guest-line,
+.guest-line-point {
+  fill: none;
+  stroke: var(--black);
+  stroke-width: 4;
+}
+
+.guest-line {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.guest-line-point {
+  fill: var(--white);
+}
+
+.guest-line-1 {
+  stroke: var(--gray-700);
+  stroke-dasharray: 10 7;
+}
+
+.guest-line-2 {
+  stroke: var(--gray-500);
+  stroke-dasharray: 3 7;
+}
+
+.guest-line-3 {
+  stroke: var(--black);
+  stroke-width: 2;
+}
+
+.guest-line-4 {
+  stroke: var(--gray-700);
+  stroke-width: 2;
+}
+
+.guest-line-5 {
+  stroke: var(--gray-500);
+  stroke-width: 2;
+}
+
+.guest-line-point {
+  stroke-dasharray: none;
+  stroke-width: 3;
+}
+
+.guest-line-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--gray-700);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.guest-line-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid var(--black);
+}
+
+.guest-line-key {
+  display: inline-block;
+  width: 22px;
+  border-top: 4px solid var(--black);
+}
+
+.guest-line-key.guest-line-1 {
+  border-top-color: var(--gray-700);
+  border-top-style: dashed;
+}
+
+.guest-line-key.guest-line-2 {
+  border-top-color: var(--gray-500);
+  border-top-style: dotted;
+}
+
+.guest-line-key.guest-line-4 {
+  border-top-color: var(--gray-700);
+}
+
+.guest-line-key.guest-line-5 {
+  border-top-color: var(--gray-500);
+}
+
+.guest-line-legend b {
+  color: var(--black);
+}
+
 .category-bars {
   display: grid;
 }

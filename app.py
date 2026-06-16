@@ -1406,6 +1406,71 @@ def order_queue_summary() -> dict:
     }
 
 
+def build_guest_alcohol_timeline(db: sqlite3.Connection) -> dict:
+    rows = db.execute(
+        """
+        SELECT
+            recipient_name AS guest_name,
+            SUBSTR(submitted_at, 1, 13) || ':00' AS hour,
+            COALESCE(SUM(alcohol_grams), 0) AS alcohol_grams
+        FROM (
+            SELECT
+                CASE
+                    WHEN TRIM(order_items.recipient_name) = '' THEN ?
+                    ELSE order_items.recipient_name
+                END AS recipient_name,
+                orders.submitted_at,
+                order_items.alcohol_grams
+            FROM order_items
+            JOIN orders ON orders.id = order_items.order_id
+            WHERE order_items.alcohol_grams > 0
+        )
+        GROUP BY recipient_name COLLATE NOCASE, hour
+        ORDER BY hour, guest_name COLLATE NOCASE
+        """,
+        (UNASSIGNED_RECIPIENT,),
+    ).fetchall()
+    if not rows:
+        return {"labels": [], "series": []}
+
+    hours = sorted({row["hour"] for row in rows})
+    labels = [iso_timestamp(hour) for hour in hours]
+    totals: dict[str, Decimal] = {}
+    by_guest_hour: dict[str, dict[str, Decimal]] = {}
+    for row in rows:
+        guest_name = row["guest_name"]
+        grams = Decimal(str(row["alcohol_grams"] or 0))
+        totals[guest_name] = totals.get(guest_name, Decimal("0")) + grams
+        by_guest_hour.setdefault(guest_name, {})[row["hour"]] = grams
+
+    top_guest_names = sorted(
+        totals,
+        key=lambda guest_name: (-totals[guest_name], guest_name.casefold()),
+    )[:6]
+    series = []
+    for guest_name in top_guest_names:
+        cumulative = Decimal("0")
+        points = []
+        for hour in hours:
+            cumulative += by_guest_hour.get(guest_name, {}).get(hour, Decimal("0"))
+            points.append(
+                {
+                    "hour": iso_timestamp(hour),
+                    "alcohol_grams": rounded_float(cumulative),
+                    "standard_drinks": standard_drinks(cumulative),
+                }
+            )
+        series.append(
+            {
+                "guest_name": guest_name,
+                "alcohol_grams": rounded_float(totals[guest_name]),
+                "standard_drinks": standard_drinks(totals[guest_name]),
+                "points": points,
+            }
+        )
+    return {"labels": labels, "series": series}
+
+
 def build_order_stats() -> dict:
     db = get_db()
     summary = order_queue_summary()
@@ -1568,6 +1633,7 @@ def build_order_stats() -> dict:
         "items": items,
         "categories": categories,
         "timeline": timeline,
+        "guest_alcohol_timeline": build_guest_alcohol_timeline(db),
     }
 
 
