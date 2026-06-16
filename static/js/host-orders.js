@@ -5,6 +5,7 @@ const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || 
 const filterButtons = Array.from(document.querySelectorAll("[data-order-filter]"));
 const clearButtons = Array.from(document.querySelectorAll("[data-clear-orders]"));
 let activeFilter = "active";
+let pendingDeleteOrderId = null;
 let orders = JSON.parse(document.querySelector("#orders-data")?.textContent || "[]");
 
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -66,9 +67,16 @@ function orderItem(item) {
 }
 
 function orderCard(order) {
+  const orderId = String(order.id);
+  const isPendingDelete = pendingDeleteOrderId === orderId;
   const completeButton = order.status === "new"
     ? `<button class="button button-dark" type="button" data-complete-order="${order.id}">Mark complete</button>`
     : `<span class="status-chip">Completed ${formatSubmittedAt(order.completed_at)}</span>`;
+  const deleteButton = `
+    <button class="button button-outline" type="button" data-delete-order="${order.id}" data-confirm-delete="${isPendingDelete}">
+      ${isPendingDelete ? "Confirm delete" : "Delete"}
+    </button>
+  `;
   const note = order.note
     ? `<p class="order-note">${escapeHtml(order.note)}</p>`
     : "";
@@ -85,6 +93,7 @@ function orderCard(order) {
         <div class="order-card-actions">
           <span class="status-chip">${escapeHtml(order.status)}</span>
           ${completeButton}
+          ${deleteButton}
         </div>
       </div>
       ${note}
@@ -135,6 +144,7 @@ async function postQueueAction(url, body = null) {
 filterButtons.forEach((button) => {
   button.addEventListener("click", async () => {
     activeFilter = button.dataset.orderFilter;
+    pendingDeleteOrderId = null;
     filterButtons.forEach((filterButton) => {
       filterButton.classList.toggle("active", filterButton === button);
     });
@@ -147,11 +157,22 @@ filterButtons.forEach((button) => {
 });
 
 ordersList.addEventListener("click", async (event) => {
-  const button = event.target.closest("[data-complete-order]");
+  const button = event.target.closest("[data-complete-order], [data-delete-order]");
   if (!button) return;
+  const deleteOrderId = button.dataset.deleteOrder;
+  if (deleteOrderId && pendingDeleteOrderId !== deleteOrderId) {
+    pendingDeleteOrderId = deleteOrderId;
+    renderOrders();
+    return;
+  }
   button.disabled = true;
   try {
-    await postQueueAction(`/host/orders/${button.dataset.completeOrder}/complete`);
+    if (button.dataset.completeOrder) {
+      await postQueueAction(`/host/orders/${button.dataset.completeOrder}/complete`);
+      return;
+    }
+    await postQueueAction(`/host/orders/${deleteOrderId}/delete`);
+    pendingDeleteOrderId = null;
   } catch {
     button.disabled = false;
     refreshStatus.textContent = "Queue action failed";

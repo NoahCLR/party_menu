@@ -449,8 +449,10 @@ class MenuAppTestCase(unittest.TestCase):
         self.app.config["ORDER_COOLDOWN_SECONDS"] = 0
         with self.app.app_context():
             from app import get_db
+            from app import remember_guest_names
 
             db = get_db()
+            remember_guest_names(["Noah", "Mila"])
             item_id = db.execute(
                 "SELECT id FROM menu_items WHERE name = 'Moscow Mule'"
             ).fetchone()[0]
@@ -470,7 +472,7 @@ class MenuAppTestCase(unittest.TestCase):
 
         token = self.token_from("/order/basket")
         basket = [
-            {"id": item_id, "quantity": 2, "recipients": ["Noah", "Mila"]},
+            {"id": item_id, "quantity": 2, "recipients": ["  noah  ", "mila"]},
         ]
         with patch("app.send_pushover_basket_order"):
             response = self.client.post(
@@ -478,7 +480,7 @@ class MenuAppTestCase(unittest.TestCase):
                 data={
                     "csrf_token": token,
                     "basket_items": json.dumps(basket),
-                    "guest_name": "Noah",
+                    "guest_name": "  noah  ",
                     "note": "For the table",
                 },
             )
@@ -499,6 +501,8 @@ class MenuAppTestCase(unittest.TestCase):
                 [("Moscow Mule", 1, "Mila"), ("Moscow Mule", 1, "Noah")],
             )
             self.assertAlmostEqual(rows[0]["alcohol_grams"], 15.78)
+            order = get_db().execute("SELECT guest_name FROM orders").fetchone()
+            self.assertEqual(order["guest_name"], "Noah")
 
         basket_page = self.client.get("/order/basket")
         self.assertIn(b"guest-names-data", basket_page.data)
@@ -586,6 +590,16 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn(b"Enter your name before sending the order.", response.data)
         self.assertIn(b"No ice", response.data)
+        reserved = self.client.post(
+            f"/order/item/{item_id}",
+            data={
+                "csrf_token": token,
+                "guest_name": "Unassigned",
+                "note": "No ice",
+            },
+        )
+        self.assertEqual(reserved.status_code, 400)
+        self.assertIn(b"Unassigned is reserved for the host.", reserved.data)
         send_order.assert_not_called()
 
     def test_guest_cannot_order_unavailable_item(self):
@@ -665,6 +679,78 @@ class MenuAppTestCase(unittest.TestCase):
                 "SELECT COUNT(*) FROM orders WHERE guest_name = 'Noah'"
             ).fetchone()[0]
             self.assertEqual(saved, 1)
+
+    def test_host_can_delete_specific_orders_from_queue_and_history(self):
+        with self.app.app_context():
+            from app import create_order
+            from app import get_db
+
+            db = get_db()
+            item = db.execute(
+                """
+                SELECT id, name, category, recipe
+                FROM menu_items
+                WHERE name = 'Moscow Mule'
+                """
+            ).fetchone()
+            active_id = create_order(
+                "Noah",
+                "",
+                [
+                    {
+                        "id": item["id"],
+                        "name": item["name"],
+                        "category": item["category"],
+                        "quantity": 1,
+                        "recipe": json.loads(item["recipe"]),
+                    }
+                ],
+                "single",
+            )
+            completed_id = create_order(
+                "Mila",
+                "",
+                [
+                    {
+                        "id": item["id"],
+                        "name": item["name"],
+                        "category": item["category"],
+                        "quantity": 1,
+                        "recipe": json.loads(item["recipe"]),
+                    }
+                ],
+                "single",
+            )
+            db.execute(
+                """
+                UPDATE orders
+                SET status = 'completed', completed_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (completed_id,),
+            )
+            db.commit()
+
+        self.login()
+        host_token = self.token_from("/host/orders")
+        active_delete = self.client.post(
+            f"/host/orders/{active_id}/delete",
+            headers={"X-CSRF-Token": host_token},
+        )
+        self.assertEqual(active_delete.status_code, 200)
+        self.assertEqual(active_delete.json["order_id"], active_id)
+        self.assertEqual(self.client.get("/host/orders.json").json["orders"], [])
+        completed = self.client.get("/host/orders.json?status=completed").json
+        self.assertEqual(completed["orders"][0]["id"], completed_id)
+
+        completed_delete = self.client.post(
+            f"/host/orders/{completed_id}/delete",
+            headers={"X-CSRF-Token": host_token},
+        )
+        self.assertEqual(completed_delete.status_code, 200)
+        all_orders = self.client.get("/host/orders.json?status=all").json
+        self.assertEqual(all_orders["orders"], [])
+        self.assertEqual(all_orders["summary"]["total_orders"], 0)
 
     def test_host_can_manage_order_queue_and_stats(self):
         with self.app.app_context():

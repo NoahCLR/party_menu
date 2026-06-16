@@ -392,6 +392,22 @@ def init_db() -> None:
             WHERE TRIM(recipient_name) = ''
             """
         )
+    for row in db.execute("SELECT id, guest_name FROM orders").fetchall():
+        normalized_name = normalize_stored_guest_name(row["guest_name"])
+        if normalized_name != row["guest_name"]:
+            db.execute(
+                "UPDATE orders SET guest_name = ? WHERE id = ?",
+                (normalized_name, row["id"]),
+            )
+    for row in db.execute("SELECT id, recipient_name FROM order_items").fetchall():
+        normalized_name = normalize_stored_guest_name(
+            row["recipient_name"], allow_empty=True
+        )
+        if normalized_name != row["recipient_name"]:
+            db.execute(
+                "UPDATE order_items SET recipient_name = ? WHERE id = ?",
+                (normalized_name, row["id"]),
+            )
     db.execute(
         """
         INSERT OR IGNORE INTO guest_names (name)
@@ -411,6 +427,24 @@ def init_db() -> None:
         """,
         (UNASSIGNED_RECIPIENT,),
     )
+    for row in db.execute("SELECT name FROM guest_names").fetchall():
+        canonical_name = row["name"]
+        db.execute(
+            """
+            UPDATE orders
+            SET guest_name = ?
+            WHERE guest_name = ? COLLATE NOCASE
+            """,
+            (canonical_name, canonical_name),
+        )
+        db.execute(
+            """
+            UPDATE order_items
+            SET recipient_name = ?
+            WHERE recipient_name = ? COLLATE NOCASE
+            """,
+            (canonical_name, canonical_name),
+        )
     categories_initialized = db.execute(
         "SELECT value FROM app_meta WHERE key = 'categories_initialized'"
     ).fetchone()
@@ -602,23 +636,71 @@ def parse_available(value: str | None, default: bool = True) -> int:
     return int(str(value).strip().casefold() not in {"0", "false", "no", "out", "sold out"})
 
 
+def collapse_guest_name(value: str | None) -> str:
+    return " ".join((value or "").strip().split())
+
+
 def clean_guest_name(value: str | None) -> str:
-    return " ".join((value or "").strip().split())[:80]
+    return collapse_guest_name(value)[:80]
 
 
 def is_reserved_guest_name(value: str | None) -> bool:
     return clean_guest_name(value).casefold() == UNASSIGNED_RECIPIENT.casefold()
 
 
-def normalize_guest_name_input(value: object) -> str:
+def normalize_guest_name_input(
+    value: object,
+    *,
+    allow_empty: bool = False,
+    type_message: str = "Names must be text.",
+    empty_message: str = "Enter a name.",
+    length_message: str = "Names may not exceed 80 characters.",
+) -> str:
     if not isinstance(value, str):
-        raise ValueError("Drink names must be text.")
-    submitted = " ".join(value.strip().split())
+        raise ValueError(type_message)
+    submitted = collapse_guest_name(value)
+    if not submitted and not allow_empty:
+        raise ValueError(empty_message)
     if len(submitted) > 80:
-        raise ValueError("Drink names may not exceed 80 characters.")
+        raise ValueError(length_message)
     if is_reserved_guest_name(submitted):
         raise ValueError("Unassigned is reserved for the host.")
-    return clean_guest_name(submitted)
+    return submitted
+
+
+def normalize_orderer_name(value: object) -> str:
+    return normalize_guest_name_input(
+        value,
+        type_message="Your name must be text.",
+        empty_message="Enter your name before sending the order.",
+        length_message="Your name may not exceed 80 characters.",
+    )
+
+
+def normalize_recipient_name(value: object) -> str:
+    return normalize_guest_name_input(
+        value,
+        allow_empty=True,
+        type_message="Drink names must be text.",
+        length_message="Drink names may not exceed 80 characters.",
+    )
+
+
+def normalize_stored_guest_name(value: str | None, *, allow_empty: bool = False) -> str:
+    name = clean_guest_name(value)
+    if not name or is_reserved_guest_name(name):
+        return "" if allow_empty else "Guest"
+    return name
+
+
+def canonical_guest_name(name: str) -> str:
+    if not name or is_reserved_guest_name(name):
+        return name
+    existing = get_db().execute(
+        "SELECT name FROM guest_names WHERE name = ? COLLATE NOCASE",
+        (name,),
+    ).fetchone()
+    return existing["name"] if existing else name
 
 
 def guest_name_label(value: str | None) -> str:
@@ -1004,6 +1086,7 @@ def create_order(
     source: str,
 ) -> int:
     db = get_db()
+    guest_name = canonical_guest_name(normalize_orderer_name(guest_name))
     prepared_items = []
     total_quantity = 0
     total_alcohol_ml = Decimal("0")
@@ -1016,8 +1099,10 @@ def create_order(
             raise ValueError("Each ordered drink needs one recipient name.")
         recipients = []
         for raw_recipient in raw_recipients:
-            recipient_name = normalize_guest_name_input(raw_recipient)
-            recipients.append(recipient_name or guest_name)
+            recipient_name = normalize_recipient_name(raw_recipient)
+            recipients.append(
+                canonical_guest_name(recipient_name) if recipient_name else guest_name
+            )
 
         recipe = normalize_recipe(item.get("recipe") or [])
         item_alcohol_ml, item_alcohol_grams = recipe_alcohol_totals(recipe)
@@ -1422,7 +1507,7 @@ def parse_basket_items(value: str | None) -> list[dict]:
             raise ValueError("Each ordered drink needs one name.")
         recipients = []
         for raw_recipient in raw_recipients:
-            recipients.append(normalize_guest_name_input(raw_recipient))
+            recipients.append(normalize_recipient_name(raw_recipient))
         seen_ids.add(item_id)
         total_quantity += quantity
         parsed.append({"id": item_id, "quantity": quantity, "recipients": recipients})
@@ -1502,7 +1587,9 @@ def register_routes(app: Flask) -> None:
             {"id": item["id"], "name": item["name"], "category": item["category"]}
             for item in catalog
         ]
-        guest_name = clean_guest_name(request.cookies.get(GUEST_NAME_COOKIE))
+        guest_name = normalize_stored_guest_name(
+            request.cookies.get(GUEST_NAME_COOKIE), allow_empty=True
+        )
         note = ""
 
         def render_basket(status: int = 200):
@@ -1518,27 +1605,17 @@ def register_routes(app: Flask) -> None:
         if request.method == "GET":
             return render_basket()
 
-        submitted_guest_name = " ".join(
-            request.form.get("guest_name", "").strip().split()
-        )
+        submitted_guest_name = request.form.get("guest_name", "")
         guest_name = clean_guest_name(submitted_guest_name)
         note = request.form.get("note", "").strip()
 
         try:
+            guest_name = canonical_guest_name(normalize_orderer_name(submitted_guest_name))
             submitted_items = parse_basket_items(request.form.get("basket_items"))
         except ValueError as error:
             flash(str(error), "error")
             return render_basket(400)
 
-        if not guest_name:
-            flash("Enter your name before sending the order.", "error")
-            return render_basket(400)
-        if len(submitted_guest_name) > 80:
-            flash("Your name may not exceed 80 characters.", "error")
-            return render_basket(400)
-        if is_reserved_guest_name(guest_name):
-            flash("Unassigned is reserved for the host.", "error")
-            return render_basket(400)
         if len(note) > 300:
             flash("The note may not exceed 300 characters.", "error")
             return render_basket(400)
@@ -1623,7 +1700,9 @@ def register_routes(app: Flask) -> None:
             return redirect(url_for("menu"))
 
         if request.method == "GET":
-            guest_name = clean_guest_name(request.cookies.get(GUEST_NAME_COOKIE))
+            guest_name = normalize_stored_guest_name(
+                request.cookies.get(GUEST_NAME_COOKIE), allow_empty=True
+            )
             return render_template(
                 "order.html",
                 item=item,
@@ -1632,35 +1711,17 @@ def register_routes(app: Flask) -> None:
                 note="",
             )
 
-        submitted_guest_name = " ".join(
-            request.form.get("guest_name", "").strip().split()
-        )
-        guest_name = clean_guest_name(submitted_guest_name)
         note = request.form.get("note", "").strip()
-        if not guest_name:
-            flash("Enter your name before sending the order.", "error")
+        try:
+            guest_name = canonical_guest_name(
+                normalize_orderer_name(request.form.get("guest_name", ""))
+            )
+        except ValueError as error:
+            flash(str(error), "error")
             return render_template(
                 "order.html",
                 item=item,
-                guest_name=guest_name,
-                guest_names=load_guest_name_options(),
-                note=note,
-            ), 400
-        if len(submitted_guest_name) > 80:
-            flash("Your name may not exceed 80 characters.", "error")
-            return render_template(
-                "order.html",
-                item=item,
-                guest_name=guest_name,
-                guest_names=load_guest_name_options(),
-                note=note,
-            ), 400
-        if is_reserved_guest_name(guest_name):
-            flash("Unassigned is reserved for the host.", "error")
-            return render_template(
-                "order.html",
-                item=item,
-                guest_name=guest_name,
+                guest_name=clean_guest_name(request.form.get("guest_name", "")),
                 guest_names=load_guest_name_options(),
                 note=note,
             ), 400
@@ -1810,6 +1871,20 @@ def register_routes(app: Flask) -> None:
                 (order_id,),
             )
             db.commit()
+        return {"ok": True, "order_id": order_id}
+
+    @app.post("/host/orders/<int:order_id>/delete")
+    @host_required
+    def delete_order(order_id: int):
+        db = get_db()
+        existing = db.execute(
+            "SELECT id FROM orders WHERE id = ?", (order_id,)
+        ).fetchone()
+        if existing is None:
+            abort(404)
+        db.execute("DELETE FROM order_items WHERE order_id = ?", (order_id,))
+        db.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+        db.commit()
         return {"ok": True, "order_id": order_id}
 
     @app.post("/host/orders/clear")
