@@ -325,7 +325,7 @@ class MenuAppTestCase(unittest.TestCase):
                 (
                     json.dumps(
                         [
-                            {"name": "Vodka", "ml": "50"},
+                            {"name": "Vodka", "ml": "50", "abv": "40"},
                             {"name": "Ginger beer", "ml": "120"},
                         ]
                     ),
@@ -369,7 +369,7 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertEqual(
             sent_items[0]["recipe"],
             [
-                {"name": "Vodka", "ml": "50"},
+                {"name": "Vodka", "ml": "50", "abv": "40"},
                 {"name": "Ginger beer", "ml": "120"},
             ],
         )
@@ -379,6 +379,36 @@ class MenuAppTestCase(unittest.TestCase):
         )
         self.assertEqual(guest_name, "Noah")
         self.assertEqual(note, "Bring together")
+
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            order = db.execute(
+                "SELECT * FROM orders WHERE guest_name = 'Noah'"
+            ).fetchone()
+            self.assertEqual(order["source"], "basket")
+            self.assertEqual(order["status"], "new")
+            self.assertEqual(order["item_count"], 3)
+            self.assertAlmostEqual(order["total_alcohol_grams"], 31.56)
+            saved_items = db.execute(
+                """
+                SELECT name, quantity, recipe, alcohol_grams
+                FROM order_items
+                WHERE order_id = ?
+                ORDER BY id
+                """,
+                (order["id"],),
+            ).fetchall()
+            self.assertEqual(
+                [(item["name"], item["quantity"]) for item in saved_items],
+                [("Moscow Mule", 2), ("Garlic Olives", 1)],
+            )
+            self.assertEqual(
+                json.loads(saved_items[0]["recipe"])[0],
+                {"name": "Vodka", "ml": "50", "abv": "40"},
+            )
+            self.assertAlmostEqual(saved_items[0]["alcohol_grams"], 31.56)
 
     def test_basket_checkout_rejects_an_item_that_is_no_longer_available(self):
         with self.app.app_context():
@@ -523,8 +553,87 @@ class MenuAppTestCase(unittest.TestCase):
             follow_redirects=True,
         )
 
-        self.assertIn(b"The order could not be sent. Please tell the host.", response.data)
+        self.assertIn(b"Order received for Noah: Espresso Martini.", response.data)
+        self.assertIn(b"host notification failed", response.data)
         self.assertNotIn(b"Pushover credentials", response.data)
+        with self.app.app_context():
+            from app import get_db
+
+            saved = get_db().execute(
+                "SELECT COUNT(*) FROM orders WHERE guest_name = 'Noah'"
+            ).fetchone()[0]
+            self.assertEqual(saved, 1)
+
+    def test_host_can_manage_order_queue_and_stats(self):
+        with self.app.app_context():
+            from app import get_db
+
+            db = get_db()
+            item_id = db.execute(
+                "SELECT id FROM menu_items WHERE name = 'Espresso Martini'"
+            ).fetchone()[0]
+            db.execute(
+                "UPDATE menu_items SET recipe = ? WHERE id = ?",
+                (
+                    json.dumps(
+                        [
+                            {"name": "Vodka", "ml": "40", "abv": "40"},
+                            {"name": "Espresso", "ml": "30"},
+                        ]
+                    ),
+                    item_id,
+                ),
+            )
+            db.commit()
+
+        token = self.token_from(f"/order/item/{item_id}")
+        with patch("app.send_pushover_order"):
+            response = self.client.post(
+                f"/order/item/{item_id}",
+                data={"csrf_token": token, "guest_name": "Mila", "note": "Fast"},
+                follow_redirects=True,
+            )
+        self.assertIn(b"Order sent for Mila: Espresso Martini.", response.data)
+
+        self.login()
+        queue_page = self.client.get("/host/orders")
+        self.assertIn(b"Order queue", queue_page.data)
+        self.assertIn(b"host-orders.js", queue_page.data)
+        self.assertIn(b"Espresso Martini", queue_page.data)
+        self.assertIn(b'"abv": "40"', queue_page.data)
+
+        queue_json = self.client.get("/host/orders.json").json
+        self.assertEqual(queue_json["summary"]["active_orders"], 1)
+        self.assertEqual(queue_json["orders"][0]["guest_name"], "Mila")
+        self.assertAlmostEqual(queue_json["orders"][0]["total_alcohol_grams"], 12.62)
+
+        stats_page = self.client.get("/host/stats")
+        self.assertIn(b"Party stats", stats_page.data)
+        self.assertIn(b"host-stats.js", stats_page.data)
+        stats_json = self.client.get("/host/stats.json").json["stats"]
+        self.assertEqual(stats_json["summary"]["total_orders"], 1)
+        self.assertEqual(stats_json["guests"][0]["guest_name"], "Mila")
+        self.assertAlmostEqual(stats_json["guests"][0]["standard_drinks"], 1.26)
+
+        host_token = self.token_from("/host/orders")
+        order_id = queue_json["orders"][0]["id"]
+        complete = self.client.post(
+            f"/host/orders/{order_id}/complete",
+            headers={"X-CSRF-Token": host_token},
+        )
+        self.assertEqual(complete.status_code, 200)
+        self.assertEqual(self.client.get("/host/orders.json").json["orders"], [])
+        completed = self.client.get("/host/orders.json?status=completed").json
+        self.assertEqual(completed["orders"][0]["status"], "completed")
+
+        clear = self.client.post(
+            "/host/orders/clear",
+            data={"csrf_token": host_token, "action": "completed"},
+        )
+        self.assertEqual(clear.status_code, 200)
+        self.assertEqual(clear.json["cleared"], 1)
+        self.assertEqual(self.client.get("/host/stats.json").json["stats"]["summary"]["total_orders"], 0)
+
 
     def test_static_assets_are_cache_busted(self):
         self.login()

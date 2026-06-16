@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}Party stats · Tonight's Menu{% endblock %}
+{% block body_class %}host-page{% endblock %}
+
+{% block body %}
+  <header class="host-header">
+    <a class="host-brand" href="{{ url_for('host_editor') }}">Tonight's Menu <span>/ Host</span></a>
+    <div class="host-header-actions">
+      <a href="{{ url_for('host_editor') }}">Editor</a>
+      <a href="{{ url_for('host_orders') }}">Orders</a>
+      <a href="{{ url_for('menu') }}" target="_blank" rel="noopener">View menu</a>
+      <form method="post" action="{{ url_for('host_logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="link-button" type="submit">Log out</button>
+      </form>
+    </div>
+  </header>
+
+  <main class="host-dashboard">
+    <div class="host-dashboard-title">
+      <div>
+        <p class="mobile-section-number">03</p>
+        <h1>Party stats</h1>
+        <p>Order volume, guest activity, popular items, and estimated alcohol ordered.</p>
+      </div>
+      <a class="button button-outline" href="{{ url_for('host_orders') }}">View queue</a>
+    </div>
+
+    <section class="dashboard-summary stats-summary" aria-label="Party summary">
+      <div><span id="stats-total-orders">0</span><small>Total orders</small></div>
+      <div><span id="stats-total-items">0</span><small>Items served</small></div>
+      <div><span id="stats-active-orders">0</span><small>Active now</small></div>
+      <div><span id="stats-standard-drinks">0.00</span><small>Est. drinks</small></div>
+    </section>
+
+    <section class="stats-grid">
+      <article class="stats-panel">
+        <div class="stats-panel-heading">
+          <h2>Guests</h2>
+          <p>Estimated drinks are based on recipe ml and ABV values.</p>
+        </div>
+        <div class="stats-table-wrap">
+          <table class="stats-table">
+            <thead>
+              <tr>
+                <th>Guest</th>
+                <th>Orders</th>
+                <th>Items</th>
+                <th>Est. drinks</th>
+                <th>Pace</th>
+              </tr>
+            </thead>
+            <tbody id="guest-stats"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="stats-panel">
+        <div class="stats-panel-heading">
+          <h2>Popular items</h2>
+          <p>Quantity ordered across the current history.</p>
+        </div>
+        <div id="item-stats" class="ranked-list"></div>
+      </article>
+
+      <article class="stats-panel full-stats-panel">
+        <div class="stats-panel-heading">
+          <h2>Timeline</h2>
+          <p>Orders and items grouped by hour.</p>
+        </div>
+        <div id="timeline-stats" class="timeline-list"></div>
+      </article>
+    </section>
+  </main>
+
+  <script id="stats-data" type="application/json">{{ stats_json|tojson }}</script>
+  <script src="{{ static_asset('js/host-stats.js') }}" defer></script>
+{% endblock %}

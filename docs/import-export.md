@@ -53,13 +53,15 @@ or trailing whitespace in headers is ignored.
 ## Recipe Format
 
 Recipes are host-only and are appended to Pushover orders after the item summary.
-Each ingredient has a `name` and an optional `ml` value.
+Each ingredient has a `name`, an optional `ml` value, and an optional `abv`
+percentage. The host stats dashboard uses `ml` and `abv` to estimate alcohol
+ordered.
 
 ```json
 [
-  {"name": "Vodka", "ml": "40"},
+  {"name": "Vodka", "ml": "40", "abv": "40"},
   {"name": "Espresso", "ml": "30"},
-  {"name": "Coffee liqueur", "ml": "20"},
+  {"name": "Coffee liqueur", "ml": "20", "abv": "20"},
   {"name": "Ice", "ml": ""}
 ]
 ```
@@ -71,6 +73,8 @@ Rules:
 - `ml` may be blank for non-liquid ingredients.
 - A supplied amount must be positive, no greater than `10000`, and have at most
   two decimal places.
+- `abv` may be blank. When supplied, it must be between `0` and `100`, have at
+  most two decimal places, and the same ingredient must include `ml`.
 
 Because CSV fields containing JSON include commas and quotation marks, use a CSV
 writer or spreadsheet export instead of manually joining values with commas.
@@ -79,7 +83,7 @@ writer or spreadsheet export instead of manually joining values with commas.
 
 ```csv
 name,description,category,available,image_url,image_filename,image_focus_x,image_focus_y,category_order,sort_order,recipe
-Espresso Martini,"Vodka, espresso, and coffee liqueur.",Cocktails,yes,,images/espresso-martini.jpg,50,40,1,1,"[{""name"":""Vodka"",""ml"":""40""}]"
+Espresso Martini,"Vodka, espresso, and coffee liqueur.",Cocktails,yes,,images/espresso-martini.jpg,50,40,1,1,"[{""name"":""Vodka"",""ml"":""40"",""abv"":""40""}]"
 Sparkling Water,Cold and fizzy.,Soft Drinks,yes,https://example.com/water.jpg,,50,50,2,1,[]
 ```
 
@@ -153,4 +157,5 @@ To restore:
 5. Verify categories, availability, images, recipes, and item ordering.
 
 The export does not contain environment variables, Pushover credentials, login
-secrets, guest cookies, or historical orders.
+secrets, guest cookies, or historical orders. Historical orders stay in the
+SQLite database until cleared from the host queue.

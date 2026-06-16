@@ -65,6 +65,9 @@ MAX_PUSHOVER_MESSAGE_LENGTH = 1024
 MAX_RECIPE_INGREDIENTS = 20
 MAX_RECIPE_INGREDIENT_NAME_LENGTH = 80
 MAX_RECIPE_ML = Decimal("10000")
+MAX_RECIPE_ABV = Decimal("100")
+ALCOHOL_GRAMS_PER_ML = Decimal("0.789")
+STANDARD_DRINK_GRAMS = Decimal("10")
 EXPORT_FORMAT_VERSION = 2
 MENU_EXPORT_COLUMNS = (
     "name",
@@ -264,6 +267,7 @@ def get_db() -> sqlite3.Connection:
         g.db = sqlite3.connect(current_app.config["DATABASE"], timeout=10)
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA busy_timeout = 10000")
+        g.db.execute("PRAGMA foreign_keys = ON")
     return g.db
 
 
@@ -311,6 +315,36 @@ def init_db() -> None:
             sort_order INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guest_name TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL DEFAULT 'single',
+            status TEXT NOT NULL DEFAULT 'new',
+            item_count INTEGER NOT NULL DEFAULT 0,
+            total_alcohol_ml REAL NOT NULL DEFAULT 0,
+            total_alcohol_grams REAL NOT NULL DEFAULT 0,
+            submitted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT,
+            CHECK (source IN ('single', 'basket')),
+            CHECK (status IN ('new', 'completed'))
+        );
+        CREATE TABLE IF NOT EXISTS order_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL,
+            menu_item_id INTEGER,
+            name TEXT NOT NULL,
+            category TEXT NOT NULL,
+            quantity INTEGER NOT NULL DEFAULT 1,
+            recipe TEXT NOT NULL DEFAULT '[]',
+            alcohol_ml REAL NOT NULL DEFAULT 0,
+            alcohol_grams REAL NOT NULL DEFAULT 0,
+            FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_orders_status_submitted
+            ON orders(status, submitted_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_order_items_order
+            ON order_items(order_id);
         """
     )
     menu_item_columns = {
@@ -540,7 +574,8 @@ def normalize_recipe(entries: object) -> list[dict[str, str]]:
             raise ValueError("Each recipe ingredient must include a name and ml value.")
         name = " ".join(str(entry.get("name", "")).strip().split())
         raw_ml = str(entry.get("ml", "")).strip()
-        if not name and not raw_ml:
+        raw_abv = str(entry.get("abv", "")).strip().removesuffix("%").strip()
+        if not name and not raw_ml and not raw_abv:
             continue
         if not name:
             raise ValueError("Every recipe amount needs an ingredient name.")
@@ -565,7 +600,29 @@ def normalize_recipe(entries: object) -> list[dict[str, str]]:
                     f"The ml amount for {name} may have two decimals at most."
                 )
             ml = format(amount.normalize(), "f")
-        recipe.append({"name": name, "ml": ml})
+
+        abv = ""
+        if raw_abv:
+            if not raw_ml:
+                raise ValueError(f"The ABV for {name} needs a ml amount.")
+            try:
+                percentage = Decimal(raw_abv)
+            except InvalidOperation as error:
+                raise ValueError(f"Invalid ABV percentage for {name}.") from error
+            if not percentage.is_finite() or percentage < 0 or percentage > MAX_RECIPE_ABV:
+                raise ValueError(
+                    f"The ABV for {name} must be between 0 and {MAX_RECIPE_ABV}."
+                )
+            if percentage.as_tuple().exponent < -2:
+                raise ValueError(
+                    f"The ABV for {name} may have two decimals at most."
+                )
+            abv = format(percentage.normalize(), "f")
+
+        ingredient = {"name": name, "ml": ml}
+        if abv:
+            ingredient["abv"] = abv
+        recipe.append(ingredient)
     return recipe
 
 
@@ -582,12 +639,14 @@ def parse_recipe_json(value: str | None) -> list[dict[str, str]]:
 def parse_recipe_form() -> list[dict[str, str]]:
     names = request.form.getlist("recipe_name")
     amounts = request.form.getlist("recipe_ml")
-    row_count = max(len(names), len(amounts))
+    abvs = request.form.getlist("recipe_abv")
+    row_count = max(len(names), len(amounts), len(abvs))
     return normalize_recipe(
         [
             {
                 "name": names[index] if index < len(names) else "",
                 "ml": amounts[index] if index < len(amounts) else "",
+                "abv": abvs[index] if index < len(abvs) else "",
             }
             for index in range(row_count)
         ]
@@ -747,14 +806,15 @@ def format_recipe_section(items: list[dict]) -> str:
         if not recipe:
             continue
         lines = [item["name"]]
-        lines.extend(
-            f"- {ingredient['ml']} ml {ingredient['name']}"
-            if ingredient["ml"]
-            else f"- {ingredient['name']}"
-            for ingredient in recipe
-        )
+        lines.extend(format_recipe_ingredient_line(ingredient) for ingredient in recipe)
         recipes.append("\n".join(lines))
     return "\n\n".join(recipes)
+
+
+def format_recipe_ingredient_line(ingredient: dict[str, str]) -> str:
+    amount = f"{ingredient['ml']} ml " if ingredient.get("ml") else ""
+    abv = f" ({ingredient['abv']}% ABV)" if ingredient.get("abv") else ""
+    return f"- {amount}{ingredient['name']}{abv}"
 
 
 def format_single_order_message(
@@ -803,6 +863,275 @@ def send_pushover_basket_order(
     send_pushover_message(
         f"Order from {guest_name}", format_basket_message(items, note)
     )
+
+
+def decimal_recipe_value(value: str | None) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    try:
+        amount = Decimal(str(value))
+    except InvalidOperation:
+        return None
+    return amount if amount.is_finite() else None
+
+
+def recipe_alcohol_totals(recipe: list[dict[str, str]]) -> tuple[Decimal, Decimal]:
+    alcohol_ml = Decimal("0")
+    for ingredient in recipe:
+        ml = decimal_recipe_value(ingredient.get("ml"))
+        abv = decimal_recipe_value(ingredient.get("abv"))
+        if ml is None or abv is None or ml <= 0 or abv <= 0:
+            continue
+        alcohol_ml += ml * (abv / Decimal("100"))
+    return alcohol_ml, alcohol_ml * ALCOHOL_GRAMS_PER_ML
+
+
+def rounded_float(value: Decimal) -> float:
+    return float(value.quantize(Decimal("0.01")))
+
+
+def standard_drinks(alcohol_grams: float | Decimal) -> float:
+    grams = Decimal(str(alcohol_grams))
+    return rounded_float(grams / STANDARD_DRINK_GRAMS)
+
+
+def create_order(
+    guest_name: str,
+    note: str,
+    items: list[dict],
+    source: str,
+) -> int:
+    db = get_db()
+    prepared_items = []
+    total_quantity = 0
+    total_alcohol_ml = Decimal("0")
+    total_alcohol_grams = Decimal("0")
+
+    for item in items:
+        quantity = int(item.get("quantity", 1))
+        recipe = normalize_recipe(item.get("recipe") or [])
+        item_alcohol_ml, item_alcohol_grams = recipe_alcohol_totals(recipe)
+        line_alcohol_ml = item_alcohol_ml * quantity
+        line_alcohol_grams = item_alcohol_grams * quantity
+        total_quantity += quantity
+        total_alcohol_ml += line_alcohol_ml
+        total_alcohol_grams += line_alcohol_grams
+        prepared_items.append(
+            {
+                "menu_item_id": item.get("id"),
+                "name": item["name"],
+                "category": item["category"],
+                "quantity": quantity,
+                "recipe": recipe_json(recipe),
+                "alcohol_ml": rounded_float(line_alcohol_ml),
+                "alcohol_grams": rounded_float(line_alcohol_grams),
+            }
+        )
+
+    cursor = db.execute(
+        """
+        INSERT INTO orders
+            (guest_name, note, source, item_count, total_alcohol_ml,
+             total_alcohol_grams)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            guest_name,
+            note,
+            source,
+            total_quantity,
+            rounded_float(total_alcohol_ml),
+            rounded_float(total_alcohol_grams),
+        ),
+    )
+    order_id = int(cursor.lastrowid)
+    db.executemany(
+        """
+        INSERT INTO order_items
+            (order_id, menu_item_id, name, category, quantity, recipe,
+             alcohol_ml, alcohol_grams)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                order_id,
+                item["menu_item_id"],
+                item["name"],
+                item["category"],
+                item["quantity"],
+                item["recipe"],
+                item["alcohol_ml"],
+                item["alcohol_grams"],
+            )
+            for item in prepared_items
+        ],
+    )
+    db.commit()
+    return order_id
+
+
+def iso_timestamp(value: str | None) -> str | None:
+    return f"{value.replace(' ', 'T')}Z" if value else None
+
+
+def serialize_order(row: sqlite3.Row, items: list[sqlite3.Row]) -> dict:
+    order_items = []
+    for item in items:
+        recipe = parse_recipe_json(item["recipe"])
+        order_items.append(
+            {
+                "id": item["id"],
+                "menu_item_id": item["menu_item_id"],
+                "name": item["name"],
+                "category": item["category"],
+                "quantity": item["quantity"],
+                "recipe": recipe,
+                "alcohol_ml": item["alcohol_ml"],
+                "alcohol_grams": item["alcohol_grams"],
+                "standard_drinks": standard_drinks(item["alcohol_grams"]),
+            }
+        )
+    return {
+        "id": row["id"],
+        "guest_name": row["guest_name"],
+        "note": row["note"],
+        "source": row["source"],
+        "status": row["status"],
+        "item_count": row["item_count"],
+        "total_alcohol_ml": row["total_alcohol_ml"],
+        "total_alcohol_grams": row["total_alcohol_grams"],
+        "standard_drinks": standard_drinks(row["total_alcohol_grams"]),
+        "submitted_at": iso_timestamp(row["submitted_at"]),
+        "completed_at": iso_timestamp(row["completed_at"]),
+        "items": order_items,
+    }
+
+
+def load_orders(status: str = "active") -> list[dict]:
+    db = get_db()
+    conditions = {
+        "active": "WHERE status = 'new'",
+        "completed": "WHERE status = 'completed'",
+        "all": "",
+    }
+    where = conditions.get(status, conditions["active"])
+    rows = db.execute(
+        f"""
+        SELECT * FROM orders
+        {where}
+        ORDER BY
+            CASE status WHEN 'new' THEN 0 ELSE 1 END,
+            submitted_at DESC,
+            id DESC
+        """
+    ).fetchall()
+    orders = []
+    for row in rows:
+        items = db.execute(
+            "SELECT * FROM order_items WHERE order_id = ? ORDER BY id",
+            (row["id"],),
+        ).fetchall()
+        orders.append(serialize_order(row, items))
+    return orders
+
+
+def order_queue_summary() -> dict:
+    db = get_db()
+    row = db.execute(
+        """
+        SELECT
+            COUNT(*) AS total_orders,
+            SUM(status = 'new') AS active_orders,
+            SUM(status = 'completed') AS completed_orders,
+            COALESCE(SUM(item_count), 0) AS total_items,
+            COALESCE(SUM(total_alcohol_grams), 0) AS total_alcohol_grams
+        FROM orders
+        """
+    ).fetchone()
+    return {
+        "total_orders": row["total_orders"],
+        "active_orders": row["active_orders"] or 0,
+        "completed_orders": row["completed_orders"] or 0,
+        "total_items": row["total_items"] or 0,
+        "total_alcohol_grams": rounded_float(Decimal(str(row["total_alcohol_grams"] or 0))),
+        "standard_drinks": standard_drinks(row["total_alcohol_grams"] or 0),
+    }
+
+
+def build_order_stats() -> dict:
+    db = get_db()
+    summary = order_queue_summary()
+    guest_rows = db.execute(
+        """
+        SELECT
+            guest_name,
+            COUNT(*) AS orders,
+            COALESCE(SUM(item_count), 0) AS items,
+            COALESCE(SUM(total_alcohol_grams), 0) AS alcohol_grams,
+            MIN(submitted_at) AS first_order_at,
+            MAX(submitted_at) AS last_order_at
+        FROM orders
+        GROUP BY guest_name COLLATE NOCASE
+        ORDER BY items DESC, orders DESC, guest_name COLLATE NOCASE
+        """
+    ).fetchall()
+    item_rows = db.execute(
+        """
+        SELECT
+            name,
+            category,
+            COALESCE(SUM(quantity), 0) AS quantity,
+            COALESCE(SUM(alcohol_grams), 0) AS alcohol_grams
+        FROM order_items
+        GROUP BY name, category
+        ORDER BY quantity DESC, name COLLATE NOCASE
+        LIMIT 12
+        """
+    ).fetchall()
+    hour_rows = db.execute(
+        """
+        SELECT
+            SUBSTR(submitted_at, 1, 13) || ':00' AS hour,
+            COUNT(*) AS orders,
+            COALESCE(SUM(item_count), 0) AS items
+        FROM orders
+        GROUP BY hour
+        ORDER BY hour
+        """
+    ).fetchall()
+    return {
+        "summary": summary,
+        "guests": [
+            {
+                "guest_name": row["guest_name"],
+                "orders": row["orders"],
+                "items": row["items"],
+                "alcohol_grams": rounded_float(Decimal(str(row["alcohol_grams"] or 0))),
+                "standard_drinks": standard_drinks(row["alcohol_grams"] or 0),
+                "first_order_at": iso_timestamp(row["first_order_at"]),
+                "last_order_at": iso_timestamp(row["last_order_at"]),
+            }
+            for row in guest_rows
+        ],
+        "items": [
+            {
+                "name": row["name"],
+                "category": row["category"],
+                "quantity": row["quantity"],
+                "alcohol_grams": rounded_float(Decimal(str(row["alcohol_grams"] or 0))),
+                "standard_drinks": standard_drinks(row["alcohol_grams"] or 0),
+            }
+            for row in item_rows
+        ],
+        "timeline": [
+            {
+                "hour": iso_timestamp(row["hour"]),
+                "orders": row["orders"],
+                "items": row["items"],
+            }
+            for row in hour_rows
+        ],
+    }
 
 
 def parse_basket_items(value: str | None) -> list[tuple[int, int]]:
@@ -980,20 +1309,28 @@ def register_routes(app: Flask) -> None:
             flash("Please wait a few seconds before ordering again.", "error")
             return render_basket(429)
 
+        create_order(guest_name, note, items, "basket")
+        notification_failed = False
         try:
             send_pushover_basket_order(items, guest_name, note)
         except PushoverError as error:
+            notification_failed = True
             current_app.logger.warning("Could not send basket order: %s", error)
-            flash("The order could not be sent. Please tell the host.", "error")
-            return render_basket(502)
-
         session["last_order_at"] = now
         item_count = sum(item["quantity"] for item in items)
-        flash(
-            f"Basket order sent for {guest_name}: {item_count} "
-            f"item{'s' if item_count != 1 else ''}.",
-            "success",
-        )
+        if notification_failed:
+            flash(
+                f"Basket order received for {guest_name}: {item_count} "
+                f"item{'s' if item_count != 1 else ''}. The host notification "
+                "failed, so ask the host to check the queue.",
+                "success",
+            )
+        else:
+            flash(
+                f"Basket order sent for {guest_name}: {item_count} "
+                f"item{'s' if item_count != 1 else ''}.",
+                "success",
+            )
         response = redirect(url_for("menu", basket_sent=1))
         response.set_cookie(
             GUEST_NAME_COOKIE,
@@ -1071,18 +1408,36 @@ def register_routes(app: Flask) -> None:
                 "order.html", item=item, guest_name=guest_name, note=note
             ), 400
 
+        create_order(
+            guest_name,
+            note,
+            [
+                {
+                    "id": item_id,
+                    "name": item["name"],
+                    "category": item["category"],
+                    "quantity": 1,
+                    "recipe": recipe,
+                }
+            ],
+            "single",
+        )
+        notification_failed = False
         try:
             send_pushover_order(
                 item["name"], item["category"], guest_name, note, recipe
             )
         except PushoverError as error:
+            notification_failed = True
             current_app.logger.warning("Could not send order: %s", error)
-            flash("The order could not be sent. Please tell the host.", "error")
-            return render_template(
-                "order.html", item=item, guest_name=guest_name, note=note
-            ), 502
+        session["last_order_at"] = now
+        if notification_failed:
+            flash(
+                f"Order received for {guest_name}: {item['name']}. The host "
+                "notification failed, so ask the host to check the queue.",
+                "success",
+            )
         else:
-            session["last_order_at"] = now
             flash(f"Order sent for {guest_name}: {item['name']}.", "success")
         response = redirect(url_for("menu"))
         response.set_cookie(
@@ -1117,6 +1472,84 @@ def register_routes(app: Flask) -> None:
     def host_logout():
         session.clear()
         return redirect(url_for("menu"))
+
+    @app.get("/host/orders")
+    @host_required
+    def host_orders():
+        return render_template(
+            "host_orders.html",
+            orders_json=load_orders("active"),
+            summary=order_queue_summary(),
+        )
+
+    @app.get("/host/orders.json")
+    @host_required
+    def host_orders_json():
+        status = request.args.get("status", "active")
+        if status not in {"active", "completed", "all"}:
+            status = "active"
+        return {
+            "orders": load_orders(status),
+            "summary": order_queue_summary(),
+            "status": status,
+            "generated_at": time.time(),
+        }
+
+    @app.post("/host/orders/<int:order_id>/complete")
+    @host_required
+    def complete_order(order_id: int):
+        db = get_db()
+        existing = db.execute(
+            "SELECT id, status FROM orders WHERE id = ?", (order_id,)
+        ).fetchone()
+        if existing is None:
+            abort(404)
+        if existing["status"] != "completed":
+            db.execute(
+                """
+                UPDATE orders
+                SET status = 'completed', completed_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (order_id,),
+            )
+            db.commit()
+        return {"ok": True, "order_id": order_id}
+
+    @app.post("/host/orders/clear")
+    @host_required
+    def clear_orders():
+        action = request.form.get("action", "completed")
+        db = get_db()
+        if action == "all":
+            cleared = db.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+            db.execute("DELETE FROM order_items")
+            db.execute("DELETE FROM orders")
+        else:
+            cleared = db.execute(
+                "SELECT COUNT(*) FROM orders WHERE status = 'completed'"
+            ).fetchone()[0]
+            db.execute(
+                """
+                DELETE FROM order_items
+                WHERE order_id IN (
+                    SELECT id FROM orders WHERE status = 'completed'
+                )
+                """
+            )
+            db.execute("DELETE FROM orders WHERE status = 'completed'")
+        db.commit()
+        return {"ok": True, "cleared": cleared, "action": action}
+
+    @app.get("/host/stats")
+    @host_required
+    def host_stats():
+        return render_template("host_stats.html", stats_json=build_order_stats())
+
+    @app.get("/host/stats.json")
+    @host_required
+    def host_stats_json():
+        return {"stats": build_order_stats(), "generated_at": time.time()}
 
     @app.get("/host")
     @host_required

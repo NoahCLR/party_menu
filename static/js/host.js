@@ -192,6 +192,20 @@ function addRecipeRow(ingredient = { name: "", ml: "" }) {
   amountInput.placeholder = "Optional";
   amountLabel.append(amountText, amountInput);
 
+  const abvLabel = document.createElement("label");
+  const abvText = document.createElement("span");
+  abvText.textContent = "ABV (%)";
+  const abvInput = document.createElement("input");
+  abvInput.name = "recipe_abv";
+  abvInput.type = "number";
+  abvInput.inputMode = "decimal";
+  abvInput.min = "0";
+  abvInput.max = "100";
+  abvInput.step = "0.01";
+  abvInput.value = ingredient.abv || "";
+  abvInput.placeholder = "Optional";
+  abvLabel.append(abvText, abvInput);
+
   const removeButton = document.createElement("button");
   removeButton.type = "button";
   removeButton.className = "recipe-remove-button";
@@ -203,7 +217,7 @@ function addRecipeRow(ingredient = { name: "", ml: "" }) {
     updateRecipeAddButton();
   });
 
-  row.append(nameLabel, amountLabel, removeButton);
+  row.append(nameLabel, amountLabel, abvLabel, removeButton);
   recipeList.append(row);
   updateRecipeAddButton();
 }

@@ -7,6 +7,8 @@
   <header class="host-header">
     <a class="host-brand" href="{{ url_for('host_editor') }}">Tonight's Menu <span>/ Host</span></a>
     <div class="host-header-actions">
+      <a href="{{ url_for('host_orders') }}">Orders</a>
+      <a href="{{ url_for('host_stats') }}">Stats</a>
       <a href="{{ url_for('menu') }}" target="_blank" rel="noopener">View menu</a>
       <form method="post" action="{{ url_for('host_logout') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -168,7 +170,7 @@
         <label class="full-field">Description<textarea name="description" id="item-description" rows="3" maxlength="500"></textarea></label>
         <fieldset class="recipe-editor full-field">
           <legend>Recipe <span>Host only</span></legend>
-          <p>Add each ingredient separately. Leave ml empty for ice, garnish, or another non-liquid ingredient.</p>
+          <p>Add each ingredient separately. Add ABV for alcoholic liquids to power the host stats.</p>
           <div id="recipe-list" class="recipe-list"></div>
           <button class="button button-outline recipe-add-button" id="add-recipe-ingredient" type="button">+ Add ingredient</button>
         </fieldset>

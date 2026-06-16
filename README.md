@@ -69,11 +69,13 @@ in a persistent Docker volume.
 - Immediate single-item ordering and an optional browser-local basket
 - Guest name remembered in a secure cookie; notes are never remembered
 - Pushover notifications with the ordered items first and host-only recipes last
+- Host-only live order queue with recipes, completion status, and order history
+- Party statistics for guests, popular items, hourly volume, and estimated drinks
 - Host login protected by an environment password
 - Add, edit, reorder, disable, and delete menu items
 - Add, rename, reorder, and remove categories
 - Hidden `Unassigned` category for items that should not appear publicly
-- Structured recipe ingredients with optional milliliter amounts
+- Structured recipe ingredients with optional milliliter and ABV values
 - Consistent responsive image crops with a host-selected focal point
 - Automatic orientation correction, resizing, and WebP conversion for uploads
 - CSV and ZIP bulk imports
@@ -87,6 +89,8 @@ in a persistent Docker volume.
 | `/order/item/<id>` | Single-item order form |
 | `/order/basket` | Basket checkout |
 | `/host` | Host editor; redirects to login when needed |
+| `/host/orders` | Host order queue and history |
+| `/host/stats` | Host party statistics dashboard |
 | `/host/login` | Host login |
 | `/health` | Container health endpoint |
 
@@ -228,6 +232,9 @@ Open `/host` and log in with `ADMIN_PASSWORD`.
 - Use the item arrows to reorder items inside their category.
 - Toggle **Available / Out** without deleting the item.
 - Use **Manage categories** to add, rename, reorder, or remove sections.
+- Use **Orders** to watch incoming orders, read recipes, and mark orders complete.
+- Use **Stats** to monitor guest/item totals and estimated drinks ordered from
+  recipe ml and ABV values.
 - When removing a category, move its items, create a replacement category, keep
   them hidden in `Unassigned`, or delete them.
 - Use **Full export** before a large edit or bulk replacement.
