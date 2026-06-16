@@ -53,9 +53,15 @@ function orderItem(item) {
   const recipientClass = item.recipient_is_unassigned
     ? "order-recipient is-unassigned"
     : "order-recipient";
+  const completedClass = item.completed ? " is-completed" : "";
+  const checked = item.completed ? "checked" : "";
   return `
-    <div class="order-item">
-      <div>
+    <div class="order-item${completedClass}">
+      <label class="order-item-check">
+        <input type="checkbox" data-complete-item="${item.id}" ${checked} aria-label="Mark ${escapeHtml(item.name)} for ${escapeHtml(item.recipient_name)} complete">
+        <span>Done</span>
+      </label>
+      <div class="order-item-main">
         <strong>${item.quantity}x ${escapeHtml(item.name)}</strong>
         <small>${escapeHtml(item.category)}</small>
         <em class="${recipientClass}">For ${escapeHtml(item.recipient_name)}</em>
@@ -69,6 +75,11 @@ function orderItem(item) {
 function orderCard(order) {
   const orderId = String(order.id);
   const isPendingDelete = pendingDeleteOrderId === orderId;
+  const recipientSummary = order.recipient_summary || order.guest_name;
+  const ordererDetail = recipientSummary
+    && recipientSummary.toLocaleLowerCase() !== String(order.guest_name || "").toLocaleLowerCase()
+    ? `From ${escapeHtml(order.guest_name)} · `
+    : "";
   const completeButton = order.status === "new"
     ? `<button class="button button-dark" type="button" data-complete-order="${order.id}">Mark complete</button>`
     : `<span class="status-chip">Completed ${formatSubmittedAt(order.completed_at)}</span>`;
@@ -87,8 +98,8 @@ function orderCard(order) {
     <article class="order-card" data-order-id="${order.id}">
       <div class="order-card-heading">
         <div>
-          <h2>${escapeHtml(order.guest_name)}</h2>
-          <p>${formatSubmittedAt(order.submitted_at)} · ${formatElapsed(order.submitted_at)} · ${order.item_count} item${order.item_count === 1 ? "" : "s"}</p>
+          <h2>${escapeHtml(recipientSummary)}</h2>
+          <p>${ordererDetail}${formatSubmittedAt(order.submitted_at)} · ${formatElapsed(order.submitted_at)} · ${order.item_count} item${order.item_count === 1 ? "" : "s"}</p>
         </div>
         <div class="order-card-actions">
           <span class="status-chip">${escapeHtml(order.status)}</span>
@@ -175,6 +186,24 @@ ordersList.addEventListener("click", async (event) => {
     pendingDeleteOrderId = null;
   } catch {
     button.disabled = false;
+    refreshStatus.textContent = "Queue action failed";
+  }
+});
+
+ordersList.addEventListener("change", async (event) => {
+  const input = event.target.closest("[data-complete-item]");
+  if (!input) return;
+  const orderCard = input.closest("[data-order-id]");
+  if (!orderCard) return;
+  input.disabled = true;
+  try {
+    await postQueueAction(
+      `/host/orders/${orderCard.dataset.orderId}/items/${input.dataset.completeItem}/complete`,
+      `completed=${input.checked ? "1" : "0"}`,
+    );
+  } catch {
+    input.checked = !input.checked;
+    input.disabled = false;
     refreshStatus.textContent = "Queue action failed";
   }
 });

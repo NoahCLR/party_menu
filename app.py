@@ -348,6 +348,7 @@ def init_db() -> None:
             recipe TEXT NOT NULL DEFAULT '[]',
             alcohol_ml REAL NOT NULL DEFAULT 0,
             alcohol_grams REAL NOT NULL DEFAULT 0,
+            completed_at TEXT,
             FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_orders_status_submitted
@@ -378,6 +379,8 @@ def init_db() -> None:
         db.execute(
             "ALTER TABLE order_items ADD COLUMN recipient_name TEXT NOT NULL DEFAULT ''"
         )
+    if "completed_at" not in order_item_columns:
+        db.execute("ALTER TABLE order_items ADD COLUMN completed_at TEXT")
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_order_items_recipient ON order_items(recipient_name)"
     )
@@ -390,6 +393,19 @@ def init_db() -> None:
                 SELECT guest_name FROM orders WHERE orders.id = order_items.order_id
             )
             WHERE TRIM(recipient_name) = ''
+            """
+        )
+    if "completed_at" not in order_item_columns:
+        db.execute(
+            """
+            UPDATE order_items
+            SET completed_at = (
+                SELECT completed_at FROM orders WHERE orders.id = order_items.order_id
+            )
+            WHERE completed_at IS NULL
+                AND order_id IN (
+                    SELECT id FROM orders WHERE status = 'completed'
+                )
             """
         )
     for row in db.execute("SELECT id, guest_name FROM orders").fetchall():
@@ -1001,6 +1017,47 @@ def format_recipe_ingredient_line(ingredient: dict[str, str]) -> str:
     return f"- {amount}{ingredient['name']}{abv}"
 
 
+def unique_guest_name_labels(names: list[str | None]) -> list[str]:
+    labels = []
+    seen = set()
+    for raw_name in names:
+        name = guest_name_label(raw_name)
+        key = name.casefold()
+        if key in seen:
+            continue
+        labels.append(name)
+        seen.add(key)
+    return labels
+
+
+def basket_recipient_names(items: list[dict], guest_name: str) -> list[str]:
+    names = []
+    for item in items:
+        quantity = int(item.get("quantity", 1))
+        recipients = item.get("recipients") or [guest_name] * quantity
+        names.extend(recipient or guest_name for recipient in recipients)
+    return unique_guest_name_labels(names or [guest_name])
+
+
+def format_guest_name_list(names: list[str]) -> str:
+    return ", ".join(names)
+
+
+def format_order_title(guest_name: str, recipient_names: list[str]) -> str:
+    recipient_summary = format_guest_name_list(recipient_names)
+    if not recipient_summary or recipient_summary.casefold() == guest_name.casefold():
+        return f"Order from {guest_name}"
+    return f"Order from {guest_name} for {recipient_summary}"
+
+
+def format_basket_item_line(item: dict, guest_name: str) -> str:
+    recipient_summary = format_guest_name_list(
+        basket_recipient_names([item], guest_name)
+    )
+    recipient_suffix = f" for {recipient_summary}" if recipient_summary else ""
+    return f"{item['quantity']}x {item['name']}{recipient_suffix}"
+
+
 def format_single_order_message(
     item_name: str,
     category: str,
@@ -1029,9 +1086,10 @@ def send_pushover_order(
     send_pushover_message(f"Order from {guest_name}", message)
 
 
-def format_basket_message(items: list[dict], note: str) -> str:
-    lines = ["Items:"]
-    lines.extend(f"{item['quantity']}x {item['name']}" for item in items)
+def format_basket_message(items: list[dict], guest_name: str, note: str) -> str:
+    recipient_names = basket_recipient_names(items, guest_name)
+    lines = [f"For: {format_guest_name_list(recipient_names)}", "Items:"]
+    lines.extend(format_basket_item_line(item, guest_name) for item in items)
     if note:
         lines.append(f"Note: {note}")
     message = "\n".join(lines)
@@ -1044,8 +1102,10 @@ def format_basket_message(items: list[dict], note: str) -> str:
 def send_pushover_basket_order(
     items: list[dict], guest_name: str, note: str
 ) -> None:
+    recipient_names = basket_recipient_names(items, guest_name)
     send_pushover_message(
-        f"Order from {guest_name}", format_basket_message(items, note)
+        format_order_title(guest_name, recipient_names),
+        format_basket_message(items, guest_name, note),
     )
 
 
@@ -1180,6 +1240,42 @@ def iso_timestamp(value: str | None) -> str | None:
     return f"{value.replace(' ', 'T')}Z" if value else None
 
 
+def sync_order_status_from_items(order_id: int) -> str:
+    db = get_db()
+    row = db.execute(
+        """
+        SELECT
+            COUNT(*) AS item_rows,
+            SUM(completed_at IS NULL) AS open_items
+        FROM order_items
+        WHERE order_id = ?
+        """,
+        (order_id,),
+    ).fetchone()
+    item_rows = row["item_rows"] or 0
+    open_items = row["open_items"] or 0
+    if item_rows > 0 and open_items == 0:
+        db.execute(
+            """
+            UPDATE orders
+            SET status = 'completed',
+                completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP)
+            WHERE id = ?
+            """,
+            (order_id,),
+        )
+        return "completed"
+    db.execute(
+        """
+        UPDATE orders
+        SET status = 'new', completed_at = NULL
+        WHERE id = ?
+        """,
+        (order_id,),
+    )
+    return "new"
+
+
 def serialize_order(row: sqlite3.Row, items: list[sqlite3.Row]) -> dict:
     order_items = []
     for item in items:
@@ -1193,15 +1289,24 @@ def serialize_order(row: sqlite3.Row, items: list[sqlite3.Row]) -> dict:
                 "quantity": item["quantity"],
                 "recipient_name": guest_name_label(item["recipient_name"]),
                 "recipient_is_unassigned": not clean_guest_name(item["recipient_name"]),
+                "completed": item["completed_at"] is not None,
+                "completed_at": iso_timestamp(item["completed_at"]),
                 "recipe": recipe,
                 "alcohol_ml": item["alcohol_ml"],
                 "alcohol_grams": item["alcohol_grams"],
                 "standard_drinks": standard_drinks(item["alcohol_grams"]),
             }
         )
+    recipient_names = unique_guest_name_labels(
+        [item["recipient_name"] for item in order_items] or [row["guest_name"]]
+    )
+    recipient_summary = format_guest_name_list(recipient_names)
     return {
         "id": row["id"],
         "guest_name": row["guest_name"],
+        "recipient_names": recipient_names,
+        "recipient_summary": recipient_summary,
+        "order_title": format_order_title(row["guest_name"], recipient_names),
         "note": row["note"],
         "source": row["source"],
         "status": row["status"],
@@ -1632,10 +1737,13 @@ def register_routes(app: Flask) -> None:
                 )
                 return render_basket(400)
             recipients = submitted_item["recipients"] or [guest_name] * quantity
-            recipients = [recipient or guest_name for recipient in recipients]
+            recipients = [
+                canonical_guest_name(recipient) if recipient else guest_name
+                for recipient in recipients
+            ]
             items.append({**item, "quantity": quantity, "recipients": recipients})
 
-        message = format_basket_message(items, note)
+        message = format_basket_message(items, guest_name, note)
         if len(message.encode("utf-8")) > MAX_PUSHOVER_MESSAGE_LENGTH:
             flash(
                 "This basket is too long to send. Remove a few items or shorten the note.",
@@ -1861,6 +1969,14 @@ def register_routes(app: Flask) -> None:
         ).fetchone()
         if existing is None:
             abort(404)
+        db.execute(
+            """
+            UPDATE order_items
+            SET completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP)
+            WHERE order_id = ?
+            """,
+            (order_id,),
+        )
         if existing["status"] != "completed":
             db.execute(
                 """
@@ -1870,8 +1986,48 @@ def register_routes(app: Flask) -> None:
                 """,
                 (order_id,),
             )
-            db.commit()
+        db.commit()
         return {"ok": True, "order_id": order_id}
+
+    @app.post("/host/orders/<int:order_id>/items/<int:item_id>/complete")
+    @host_required
+    def complete_order_item(order_id: int, item_id: int):
+        completed = request.form.get("completed", "1").strip().casefold() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        db = get_db()
+        existing = db.execute(
+            "SELECT id FROM order_items WHERE id = ? AND order_id = ?",
+            (item_id, order_id),
+        ).fetchone()
+        if existing is None:
+            abort(404)
+        if completed:
+            db.execute(
+                """
+                UPDATE order_items
+                SET completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP)
+                WHERE id = ?
+                """,
+                (item_id,),
+            )
+        else:
+            db.execute(
+                "UPDATE order_items SET completed_at = NULL WHERE id = ?",
+                (item_id,),
+            )
+        order_status = sync_order_status_from_items(order_id)
+        db.commit()
+        return {
+            "ok": True,
+            "order_id": order_id,
+            "item_id": item_id,
+            "completed": completed,
+            "order_status": order_status,
+        }
 
     @app.post("/host/orders/<int:order_id>/delete")
     @host_required

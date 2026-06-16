@@ -130,6 +130,7 @@ class MenuAppTestCase(unittest.TestCase):
                     {
                         "name": "Moscow Mule",
                         "quantity": 2,
+                        "recipients": ["Noah", "Mila"],
                         "recipe": [
                             {"name": "Vodka", "ml": "50"},
                             {"name": "Ginger beer", "ml": "120"},
@@ -139,6 +140,7 @@ class MenuAppTestCase(unittest.TestCase):
                     {
                         "name": "Gin & Tonic",
                         "quantity": 1,
+                        "recipients": ["Mila"],
                         "recipe": [
                             {"name": "Gin", "ml": "50"},
                             {"name": "Tonic", "ml": "150"},
@@ -150,11 +152,12 @@ class MenuAppTestCase(unittest.TestCase):
             )
 
         payload = parse_qs(mocked.call_args.args[0].data.decode())
-        self.assertEqual(payload["title"], ["Order from Noah"])
+        self.assertEqual(payload["title"], ["Order from Noah for Noah, Mila"])
         self.assertEqual(
             payload["message"],
             [
-                "Items:\n2x Moscow Mule\n1x Gin & Tonic\nNote: Bring together"
+                "For: Noah, Mila\nItems:\n2x Moscow Mule for Noah, Mila"
+                "\n1x Gin & Tonic for Mila\nNote: Bring together"
                 "\n\nRecipes:\nMoscow Mule\n- 50 ml Vodka\n- 120 ml Ginger beer"
                 "\n- Lime wedge\n\nGin & Tonic\n- 50 ml Gin\n- 150 ml Tonic"
             ],
@@ -474,7 +477,7 @@ class MenuAppTestCase(unittest.TestCase):
         basket = [
             {"id": item_id, "quantity": 2, "recipients": ["  noah  ", "mila"]},
         ]
-        with patch("app.send_pushover_basket_order"):
+        with patch("app.send_pushover_basket_order") as send_order:
             response = self.client.post(
                 "/order/basket",
                 data={
@@ -485,6 +488,10 @@ class MenuAppTestCase(unittest.TestCase):
                 },
             )
         self.assertEqual(response.status_code, 302)
+        sent_items, sent_guest_name, sent_note = send_order.call_args.args
+        self.assertEqual(sent_guest_name, "Noah")
+        self.assertEqual(sent_note, "For the table")
+        self.assertEqual(sent_items[0]["recipients"], ["Noah", "Mila"])
 
         with self.app.app_context():
             from app import get_db
@@ -511,6 +518,12 @@ class MenuAppTestCase(unittest.TestCase):
 
         self.login()
         queue_json = self.client.get("/host/orders.json").json
+        self.assertEqual(queue_json["orders"][0]["recipient_names"], ["Noah", "Mila"])
+        self.assertEqual(queue_json["orders"][0]["recipient_summary"], "Noah, Mila")
+        self.assertEqual(
+            queue_json["orders"][0]["order_title"],
+            "Order from Noah for Noah, Mila",
+        )
         recipients = {
             item["recipient_name"] for item in queue_json["orders"][0]["items"]
         }
@@ -751,6 +764,96 @@ class MenuAppTestCase(unittest.TestCase):
         all_orders = self.client.get("/host/orders.json?status=all").json
         self.assertEqual(all_orders["orders"], [])
         self.assertEqual(all_orders["summary"]["total_orders"], 0)
+
+    def test_host_can_check_off_order_items_and_auto_complete_order(self):
+        with self.app.app_context():
+            from app import create_order
+            from app import get_db
+
+            db = get_db()
+            rows = db.execute(
+                """
+                SELECT id, name, category, recipe
+                FROM menu_items
+                WHERE name IN ('Moscow Mule', 'Garlic Olives')
+                """
+            ).fetchall()
+            items_by_name = {row["name"]: row for row in rows}
+            order_id = create_order(
+                "Noah",
+                "",
+                [
+                    {
+                        "id": items_by_name["Moscow Mule"]["id"],
+                        "name": items_by_name["Moscow Mule"]["name"],
+                        "category": items_by_name["Moscow Mule"]["category"],
+                        "quantity": 1,
+                        "recipe": json.loads(items_by_name["Moscow Mule"]["recipe"]),
+                    },
+                    {
+                        "id": items_by_name["Garlic Olives"]["id"],
+                        "name": items_by_name["Garlic Olives"]["name"],
+                        "category": items_by_name["Garlic Olives"]["category"],
+                        "quantity": 1,
+                        "recipe": json.loads(items_by_name["Garlic Olives"]["recipe"]),
+                    },
+                ],
+                "basket",
+            )
+
+        self.login()
+        host_token = self.token_from("/host/orders")
+        queue = self.client.get("/host/orders.json").json
+        self.assertEqual(queue["orders"][0]["status"], "new")
+        self.assertEqual(
+            [item["completed"] for item in queue["orders"][0]["items"]],
+            [False, False],
+        )
+        first_item_id = queue["orders"][0]["items"][0]["id"]
+        second_item_id = queue["orders"][0]["items"][1]["id"]
+
+        first_complete = self.client.post(
+            f"/host/orders/{order_id}/items/{first_item_id}/complete",
+            data={"completed": "1"},
+            headers={"X-CSRF-Token": host_token},
+        )
+        self.assertEqual(first_complete.status_code, 200)
+        self.assertEqual(first_complete.json["order_status"], "new")
+        queue = self.client.get("/host/orders.json").json
+        self.assertEqual(queue["summary"]["active_orders"], 1)
+        self.assertEqual(
+            [item["completed"] for item in queue["orders"][0]["items"]],
+            [True, False],
+        )
+
+        second_complete = self.client.post(
+            f"/host/orders/{order_id}/items/{second_item_id}/complete",
+            data={"completed": "1"},
+            headers={"X-CSRF-Token": host_token},
+        )
+        self.assertEqual(second_complete.status_code, 200)
+        self.assertEqual(second_complete.json["order_status"], "completed")
+        self.assertEqual(self.client.get("/host/orders.json").json["orders"], [])
+        completed = self.client.get("/host/orders.json?status=completed").json
+        self.assertEqual(completed["orders"][0]["status"], "completed")
+        self.assertEqual(
+            [item["completed"] for item in completed["orders"][0]["items"]],
+            [True, True],
+        )
+
+        reopen = self.client.post(
+            f"/host/orders/{order_id}/items/{first_item_id}/complete",
+            data={"completed": "0"},
+            headers={"X-CSRF-Token": host_token},
+        )
+        self.assertEqual(reopen.status_code, 200)
+        self.assertEqual(reopen.json["order_status"], "new")
+        queue = self.client.get("/host/orders.json").json
+        self.assertEqual(queue["orders"][0]["status"], "new")
+        self.assertEqual(
+            [item["completed"] for item in queue["orders"][0]["items"]],
+            [False, True],
+        )
 
     def test_host_can_manage_order_queue_and_stats(self):
         with self.app.app_context():

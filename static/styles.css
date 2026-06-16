@@ -1419,10 +1419,39 @@ img {
 
 .order-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 8px 16px;
   padding: 13px 0 0;
   border-top: 1px solid var(--gray-300);
+}
+
+.order-item.is-completed .order-item-main {
+  color: var(--gray-500);
+}
+
+.order-item.is-completed strong,
+.order-item.is-completed small {
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+}
+
+.order-item-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: start;
+  min-height: 30px;
+  color: var(--gray-700);
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.order-item-check input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--black);
 }
 
 .order-item strong,
@@ -1457,7 +1486,7 @@ img {
 }
 
 .order-recipe {
-  grid-column: 1 / -1;
+  grid-column: 2 / -1;
   margin: 0;
   padding-left: 18px;
   color: var(--gray-700);
@@ -1471,7 +1500,7 @@ img {
 }
 
 .order-no-recipe {
-  grid-column: 1 / -1;
+  grid-column: 2 / -1;
   margin: 0;
 }
 
@@ -2887,12 +2916,22 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .order-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
   .order-card-actions {
     justify-content: flex-start;
   }
 
   .order-item > span {
+    grid-column: 2;
     white-space: normal;
+  }
+
+  .order-recipe,
+  .order-no-recipe {
+    grid-column: 2;
   }
 
   .stats-grid {
