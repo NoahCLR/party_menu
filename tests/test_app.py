@@ -1194,6 +1194,8 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(".image-focus-preview {", stylesheet)
         self.assertIn(".public-flash.is-dismissing,", stylesheet)
         self.assertIn(".name-input-clear", stylesheet)
+        self.assertIn(".order-form .basket-recipient > span", stylesheet)
+        self.assertNotIn(".order-form .basket-recipient span {", stylesheet)
         self.assertIn("overscroll-behavior: contain;", stylesheet)
         self.assertIn(".basket-name-required", stylesheet)
         self.assertIn(".recipe-single-button", stylesheet)

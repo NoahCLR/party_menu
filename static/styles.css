@@ -842,7 +842,7 @@ img {
   gap: 7px;
 }
 
-.order-form .basket-recipient span {
+.order-form .basket-recipient > span {
   color: var(--gray-300);
   font-size: 0.68rem;
   font-weight: 800;
