@@ -4,9 +4,8 @@ const basketItemsInput = document.querySelector("#basket-items-input");
 const basketEmpty = document.querySelector("#basket-empty");
 const basketTotal = document.querySelector("#basket-total");
 const basketSubmit = document.querySelector("#basket-submit");
-const basketAssignmentTools = document.querySelector("#basket-assignment-tools");
-const basketUseBuyerButton = document.querySelector("#basket-use-buyer");
 const guestNameInput = document.querySelector("#guest_name");
+const noteInput = document.querySelector("#note");
 const catalogElement = document.querySelector("#basket-catalog");
 const catalog = JSON.parse(catalogElement?.textContent || "[]");
 const catalogById = new Map(catalog.map((item) => [String(item.id), item]));
@@ -31,22 +30,18 @@ function currentGuestName() {
   return trimmedName(guestNameInput.value);
 }
 
-function updateRecipientDraft(key, value, input = null) {
-  recipientDrafts.set(key, value);
-  if (input) {
-    input.value = value;
-    input.dataset.defaultRecipient =
-      trimmedName(value) === "" || trimmedName(value) === currentGuestName()
-        ? "true"
-        : "false";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  }
-}
-
 function captureRecipientInputs() {
   basketItemsElement.querySelectorAll(".basket-recipient-input").forEach((input) => {
     recipientDrafts.set(input.dataset.assignmentKey, input.value);
   });
+}
+
+function focusNextRecipient(input) {
+  const inputs = Array.from(basketItemsElement.querySelectorAll(".basket-recipient-input"));
+  const nextInput = inputs[inputs.indexOf(input) + 1];
+  const target = nextInput || noteInput || basketSubmit;
+  target?.focus();
+  target?.select?.();
 }
 
 function quantityButton(label, ariaLabel, onClick) {
@@ -90,29 +85,17 @@ function recipientInput(id, index, itemName) {
         : "false";
     recipientDrafts.set(key, input.value);
   });
+  input.addEventListener("focus", () => {
+    input.select();
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    focusNextRecipient(input);
+  });
 
   label.append(labelText, input);
   return label;
-}
-
-function copyFirstRecipientToItem(id, quantity) {
-  captureRecipientInputs();
-  const firstKey = assignmentKey(id, 0);
-  const source = trimmedName(recipientDrafts.get(firstKey)) || currentGuestName();
-  for (let index = 0; index < quantity; index += 1) {
-    const key = assignmentKey(id, index);
-    const input = Array.from(basketItemsElement.querySelectorAll(".basket-recipient-input"))
-      .find((recipientInputElement) => recipientInputElement.dataset.assignmentKey === key);
-    updateRecipientDraft(key, source, input);
-  }
-}
-
-function useBuyerForAllRecipients() {
-  const buyerName = currentGuestName();
-  captureRecipientInputs();
-  basketItemsElement.querySelectorAll(".basket-recipient-input").forEach((input) => {
-    updateRecipientDraft(input.dataset.assignmentKey, buyerName, input);
-  });
 }
 
 function renderBasket() {
@@ -182,14 +165,6 @@ function renderBasket() {
     const recipientTitle = document.createElement("span");
     recipientTitle.textContent = quantity === 1 ? `For ${item.name}` : `For each ${item.name}`;
     recipientHeading.append(recipientTitle);
-    if (quantity > 1) {
-      const copyFirst = document.createElement("button");
-      copyFirst.type = "button";
-      copyFirst.dataset.copyItemRecipients = id;
-      copyFirst.dataset.quantity = String(quantity);
-      copyFirst.textContent = "Copy first to all";
-      recipientHeading.append(copyFirst);
-    }
     recipientsWrap.append(recipientHeading);
     for (let index = 0; index < quantity; index += 1) {
       const key = assignmentKey(id, index);
@@ -204,7 +179,6 @@ function renderBasket() {
   basketItemsInput.value = JSON.stringify(submittedItems);
   basketEmpty.hidden = totalQuantity > 0;
   basketSubmit.disabled = totalQuantity === 0;
-  basketAssignmentTools.hidden = totalQuantity <= 1;
   basketTotal.textContent = totalQuantity
     ? `${totalQuantity} item${totalQuantity === 1 ? "" : "s"}`
     : "";
@@ -231,14 +205,9 @@ guestNameInput.addEventListener("input", () => {
   lastGuestName = nextGuestName;
 });
 
-basketUseBuyerButton.addEventListener("click", () => {
-  useBuyerForAllRecipients();
-});
-
-basketItemsElement.addEventListener("click", (event) => {
-  const copyButton = event.target.closest("[data-copy-item-recipients]");
-  if (!copyButton) return;
-  copyFirstRecipientToItem(copyButton.dataset.copyItemRecipients, Number(copyButton.dataset.quantity || 0));
+basketItemsElement.addEventListener("party-name-selected", (event) => {
+  const input = event.target.closest(".basket-recipient-input");
+  if (input) focusNextRecipient(input);
 });
 
 window.addEventListener("storage", renderBasket);

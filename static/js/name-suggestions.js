@@ -14,6 +14,10 @@ function createSuggestionButton(name, input, panel) {
     input.dispatchEvent(new Event("input", { bubbles: true }));
     panel.hidden = true;
     input.focus();
+    input.dispatchEvent(new CustomEvent("party-name-selected", {
+      bubbles: true,
+      detail: { name },
+    }));
   });
   return button;
 }

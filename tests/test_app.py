@@ -520,8 +520,8 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(b"guest-names-data", basket_page.data)
         self.assertIn(b"Mila", basket_page.data)
         self.assertIn(b"name-suggestions.js", basket_page.data)
-        self.assertIn(b'id="basket-assignment-tools"', basket_page.data)
-        self.assertIn(b"Use your name for all", basket_page.data)
+        self.assertNotIn(b'id="basket-assignment-tools"', basket_page.data)
+        self.assertNotIn(b"Use your name for all", basket_page.data)
 
         self.login()
         queue_json = self.client.get("/host/orders.json").json
@@ -1148,8 +1148,10 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(".category-pie", stylesheet)
         self.assertIn(".guest-line-detail", stylesheet)
         self.assertIn(".recipe-row-controls", stylesheet)
+        self.assertIn('.recipe-row-controls [data-recipe-move="up"]', stylesheet)
+        self.assertIn('.recipe-row-controls [data-recipe-move="down"]', stylesheet)
         self.assertIn(".mobile-editor-filters", stylesheet)
-        self.assertIn(".basket-assignment-tools", stylesheet)
+        self.assertNotIn(".basket-assignment-tools", stylesheet)
         self.assertIn(".table-sort-button", stylesheet)
         self.assertIn("[data-guest-row][hidden]", stylesheet)
         self.assertIn(".button-danger", stylesheet)
@@ -1159,6 +1161,7 @@ class MenuAppTestCase(unittest.TestCase):
         name_suggestions_response.close()
         self.assertIn("Clear name", name_suggestions)
         self.assertIn("name-input-wrap", name_suggestions)
+        self.assertIn("party-name-selected", name_suggestions)
 
         host_js_response = self.client.get("/static/js/host.js")
         host_js = host_js_response.text
@@ -1185,8 +1188,10 @@ class MenuAppTestCase(unittest.TestCase):
         basket_js_response = self.client.get("/static/js/basket.js")
         basket_js = basket_js_response.text
         basket_js_response.close()
-        self.assertIn("basket-use-buyer", basket_js)
-        self.assertIn("copyItemRecipients", basket_js)
+        self.assertNotIn("basket-use-buyer", basket_js)
+        self.assertNotIn("copyItemRecipients", basket_js)
+        self.assertIn("focusNextRecipient", basket_js)
+        self.assertIn("party-name-selected", basket_js)
 
         host_names_response = self.client.get("/static/js/host-names.js")
         host_names = host_names_response.text
