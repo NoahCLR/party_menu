@@ -349,8 +349,16 @@ class MenuAppTestCase(unittest.TestCase):
 
         token = self.token_from("/order/basket")
         basket = [
-            {"id": item_ids["Moscow Mule"], "quantity": 2},
-            {"id": item_ids["Garlic Olives"], "quantity": 1},
+            {
+                "id": item_ids["Moscow Mule"],
+                "quantity": 2,
+                "recipients": ["Noah", "Noah"],
+            },
+            {
+                "id": item_ids["Garlic Olives"],
+                "quantity": 1,
+                "recipients": ["Noah"],
+            },
         ]
         with patch("app.send_pushover_basket_order") as send_order:
             response = self.client.post(
@@ -441,7 +449,9 @@ class MenuAppTestCase(unittest.TestCase):
                 "/order/basket",
                 data={
                     "csrf_token": token,
-                    "basket_items": json.dumps([{"id": item_id, "quantity": 1}]),
+                    "basket_items": json.dumps(
+                        [{"id": item_id, "quantity": 1, "recipients": ["Noah"]}]
+                    ),
                     "guest_name": "Noah",
                     "note": "",
                 },
@@ -449,6 +459,32 @@ class MenuAppTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn(b"no longer available", response.data)
+        send_order.assert_not_called()
+
+    def test_basket_checkout_requires_a_name_for_each_drink(self):
+        with self.app.app_context():
+            from app import get_db
+
+            item_id = get_db().execute(
+                "SELECT id FROM menu_items WHERE name = 'Moscow Mule'"
+            ).fetchone()[0]
+
+        token = self.token_from("/order/basket")
+        with patch("app.send_pushover_basket_order") as send_order:
+            response = self.client.post(
+                "/order/basket",
+                data={
+                    "csrf_token": token,
+                    "basket_items": json.dumps(
+                        [{"id": item_id, "quantity": 2, "recipients": ["Noah", ""]}]
+                    ),
+                    "guest_name": "Noah",
+                    "note": "",
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"Each ordered drink needs one name.", response.data)
         send_order.assert_not_called()
 
     def test_basket_recipients_can_be_split_and_host_can_delete_names(self):
@@ -1136,6 +1172,9 @@ class MenuAppTestCase(unittest.TestCase):
         orders_response = self.client.get("/host/orders")
         self.assertIn(b"Alcohol ml", orders_response.data)
         self.assertIn(b"button-danger", orders_response.data)
+        basket_response = self.client.get("/order/basket")
+        self.assertIn(b'id="basket-name-required"', basket_response.data)
+        self.assertIn(b"Assign a name to every drink before sending.", basket_response.data)
 
         stylesheet_response = self.client.get("/static/styles.css")
         stylesheet = stylesheet_response.text
@@ -1156,6 +1195,7 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(".public-flash.is-dismissing,", stylesheet)
         self.assertIn(".name-input-clear", stylesheet)
         self.assertIn("overscroll-behavior: contain;", stylesheet)
+        self.assertIn(".basket-name-required", stylesheet)
         self.assertIn(".recipe-single-button", stylesheet)
         self.assertIn(".stats-range-control", stylesheet)
         self.assertIn(".rush-line", stylesheet)
@@ -1208,6 +1248,8 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertNotIn("copyItemRecipients", basket_js)
         self.assertIn("focusNextRecipient", basket_js)
         self.assertIn("party-name-selected", basket_js)
+        self.assertIn("allRecipientsAssigned", basket_js)
+        self.assertIn("shouldPrefillRecipient = totalQuantity === 1", basket_js)
 
         host_names_response = self.client.get("/static/js/host-names.js")
         host_names = host_names_response.text

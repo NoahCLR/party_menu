@@ -4,13 +4,13 @@ const basketItemsInput = document.querySelector("#basket-items-input");
 const basketEmpty = document.querySelector("#basket-empty");
 const basketTotal = document.querySelector("#basket-total");
 const basketSubmit = document.querySelector("#basket-submit");
+const basketNameRequired = document.querySelector("#basket-name-required");
 const guestNameInput = document.querySelector("#guest_name");
 const noteInput = document.querySelector("#note");
 const catalogElement = document.querySelector("#basket-catalog");
 const catalog = JSON.parse(catalogElement?.textContent || "[]");
 const catalogById = new Map(catalog.map((item) => [String(item.id), item]));
 const recipientDrafts = new Map();
-let lastGuestName = "";
 
 function checkoutState() {
   return Object.fromEntries(
@@ -32,8 +32,39 @@ function currentGuestName() {
 
 function captureRecipientInputs() {
   basketItemsElement.querySelectorAll(".basket-recipient-input").forEach((input) => {
-    recipientDrafts.set(input.dataset.assignmentKey, input.value);
+    if (input.dataset.defaultRecipient === "true") {
+      recipientDrafts.delete(input.dataset.assignmentKey);
+    } else {
+      recipientDrafts.set(input.dataset.assignmentKey, input.value);
+    }
   });
+}
+
+function recipientInputFor(key) {
+  return Array.from(basketItemsElement.querySelectorAll(".basket-recipient-input"))
+    .find((input) => input.dataset.assignmentKey === key);
+}
+
+function updateBasketSubmissionState() {
+  const items = checkoutState();
+  const submittedItems = [];
+  let totalQuantity = 0;
+  let allRecipientsAssigned = true;
+
+  Object.entries(items).forEach(([id, quantity]) => {
+    totalQuantity += quantity;
+    const recipients = [];
+    for (let index = 0; index < quantity; index += 1) {
+      const recipientName = trimmedName(recipientInputFor(assignmentKey(id, index))?.value);
+      recipients.push(recipientName);
+      if (!recipientName) allRecipientsAssigned = false;
+    }
+    submittedItems.push({ id: Number(id), quantity, recipients });
+  });
+
+  basketItemsInput.value = JSON.stringify(submittedItems);
+  basketSubmit.disabled = totalQuantity === 0 || !allRecipientsAssigned;
+  basketNameRequired.hidden = totalQuantity === 0 || allRecipientsAssigned;
 }
 
 function focusNextRecipient(input) {
@@ -54,7 +85,7 @@ function quantityButton(label, ariaLabel, onClick) {
   return button;
 }
 
-function recipientInput(id, index, itemName) {
+function recipientInput(id, index, itemName, shouldPrefill) {
   const key = assignmentKey(id, index);
   const label = document.createElement("label");
   label.className = "basket-recipient";
@@ -64,26 +95,24 @@ function recipientInput(id, index, itemName) {
   labelText.textContent = `#${index + 1}`;
 
   const input = document.createElement("input");
-  const draft = recipientDrafts.get(key);
-  const isDefaultRecipient = !recipientDrafts.has(key)
-    || trimmedName(draft) === ""
-    || trimmedName(draft) === lastGuestName;
+  const hasDraft = recipientDrafts.has(key);
+  const draft = hasDraft ? recipientDrafts.get(key) : "";
+  const isDefaultRecipient = shouldPrefill && !hasDraft;
   input.id = `recipient-${id}-${index}`;
   input.type = "text";
   input.maxLength = 80;
   input.autocomplete = "name";
-  input.placeholder = currentGuestName() || "Name";
+  input.required = true;
+  input.placeholder = shouldPrefill && currentGuestName() ? currentGuestName() : "Name";
   input.value = isDefaultRecipient ? currentGuestName() : draft;
   input.dataset.assignmentKey = key;
   input.dataset.defaultRecipient = isDefaultRecipient ? "true" : "false";
   input.dataset.nameAutocomplete = "";
   input.className = "basket-recipient-input";
   input.addEventListener("input", () => {
-    input.dataset.defaultRecipient =
-      trimmedName(input.value) === "" || trimmedName(input.value) === currentGuestName()
-        ? "true"
-        : "false";
+    input.dataset.defaultRecipient = "false";
     recipientDrafts.set(key, input.value);
+    updateBasketSubmissionState();
   });
   input.addEventListener("focus", () => {
     input.select();
@@ -107,13 +136,12 @@ function renderBasket() {
   }
 
   basketItemsElement.replaceChildren();
-  let totalQuantity = 0;
-  const submittedItems = [];
+  const totalQuantity = Object.values(items)
+    .reduce((total, quantity) => total + quantity, 0);
+  const shouldPrefillRecipient = totalQuantity === 1;
 
   Object.entries(items).forEach(([id, quantity]) => {
     const item = catalogById.get(id);
-    totalQuantity += quantity;
-    const recipients = [];
 
     const row = document.createElement("article");
     row.className = "basket-checkout-item";
@@ -167,22 +195,20 @@ function renderBasket() {
     recipientHeading.append(recipientTitle);
     recipientsWrap.append(recipientHeading);
     for (let index = 0; index < quantity; index += 1) {
-      const key = assignmentKey(id, index);
-      recipientsWrap.append(recipientInput(id, index, item.name));
-      recipients.push(trimmedName(recipientDrafts.get(key)) || currentGuestName());
+      recipientsWrap.append(
+        recipientInput(id, index, item.name, shouldPrefillRecipient),
+      );
     }
     row.append(recipientsWrap);
     basketItemsElement.append(row);
-    submittedItems.push({ id: Number(id), quantity, recipients });
   });
 
-  basketItemsInput.value = JSON.stringify(submittedItems);
   basketEmpty.hidden = totalQuantity > 0;
-  basketSubmit.disabled = totalQuantity === 0;
   basketTotal.textContent = totalQuantity
     ? `${totalQuantity} item${totalQuantity === 1 ? "" : "s"}`
     : "";
   window.partyNameSuggestions?.enhance(basketItemsElement);
+  updateBasketSubmissionState();
 }
 
 basketForm.addEventListener("submit", (event) => {
@@ -194,15 +220,14 @@ basketForm.addEventListener("submit", (event) => {
 
 guestNameInput.addEventListener("input", () => {
   const nextGuestName = currentGuestName();
+  const shouldPrefillRecipient = window.partyBasket.count() === 1;
   basketItemsElement.querySelectorAll(".basket-recipient-input").forEach((input) => {
-    input.placeholder = nextGuestName || "Name";
+    input.placeholder = shouldPrefillRecipient && nextGuestName ? nextGuestName : "Name";
     if (input.dataset.defaultRecipient === "true") {
       input.value = nextGuestName;
-      recipientDrafts.set(input.dataset.assignmentKey, nextGuestName);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
     }
   });
-  lastGuestName = nextGuestName;
+  updateBasketSubmissionState();
 });
 
 basketItemsElement.addEventListener("party-name-selected", (event) => {
@@ -211,5 +236,4 @@ basketItemsElement.addEventListener("party-name-selected", (event) => {
 });
 
 window.addEventListener("storage", renderBasket);
-lastGuestName = currentGuestName();
 renderBasket();

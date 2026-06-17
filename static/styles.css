@@ -858,6 +858,19 @@ img {
   line-height: 1.5;
 }
 
+.basket-name-required {
+  margin: 10px 0 0;
+  color: var(--white);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.basket-name-required[hidden] {
+  display: none;
+}
+
 .order-back {
   display: inline-block;
   margin-top: 24px;

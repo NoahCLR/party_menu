@@ -1980,14 +1980,19 @@ def parse_basket_items(value: str | None) -> list[dict]:
             raise ValueError("Your basket contains an invalid quantity.")
         if item_id in seen_ids:
             raise ValueError("Your basket contains a duplicate item.")
-        raw_recipients = entry.get("recipients") or []
-        if raw_recipients and not isinstance(raw_recipients, list):
+        raw_recipients = entry.get("recipients")
+        if raw_recipients is None:
+            raise ValueError("Each ordered drink needs one name.")
+        if not isinstance(raw_recipients, list):
             raise ValueError("Your basket contains invalid drink names.")
-        if raw_recipients and len(raw_recipients) != quantity:
+        if len(raw_recipients) != quantity:
             raise ValueError("Each ordered drink needs one name.")
         recipients = []
         for raw_recipient in raw_recipients:
-            recipients.append(normalize_recipient_name(raw_recipient))
+            recipient_name = normalize_recipient_name(raw_recipient)
+            if not recipient_name:
+                raise ValueError("Each ordered drink needs one name.")
+            recipients.append(recipient_name)
         seen_ids.add(item_id)
         total_quantity += quantity
         parsed.append({"id": item_id, "quantity": quantity, "recipients": recipients})
@@ -2111,10 +2116,9 @@ def register_routes(app: Flask) -> None:
                     "error",
                 )
                 return render_basket(400)
-            recipients = submitted_item["recipients"] or [guest_name] * quantity
             recipients = [
-                canonical_guest_name(recipient) if recipient else guest_name
-                for recipient in recipients
+                canonical_guest_name(recipient)
+                for recipient in submitted_item["recipients"]
             ]
             items.append({**item, "quantity": quantity, "recipients": recipients})
 
