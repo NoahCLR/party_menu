@@ -572,6 +572,19 @@ class MenuAppTestCase(unittest.TestCase):
             [("Noah", 1), ("Unassigned", 1)],
         )
 
+    def test_basket_name_suggestions_include_all_known_guest_names(self):
+        with self.app.app_context():
+            from app import get_db
+            from app import remember_guest_names
+
+            remember_guest_names([f"Guest {index:02d}" for index in range(60)])
+            get_db().commit()
+
+        basket_page = self.client.get("/order/basket")
+        self.assertIn(b"guest-names-data", basket_page.data)
+        self.assertIn(b"Guest 00", basket_page.data)
+        self.assertIn(b"Guest 59", basket_page.data)
+
     def test_host_name_detail_can_add_and_remove_drinks(self):
         with self.app.app_context():
             from app import create_order
@@ -1142,6 +1155,7 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn(".image-focus-preview {", stylesheet)
         self.assertIn(".public-flash.is-dismissing,", stylesheet)
         self.assertIn(".name-input-clear", stylesheet)
+        self.assertIn("overscroll-behavior: contain;", stylesheet)
         self.assertIn(".recipe-single-button", stylesheet)
         self.assertIn(".stats-range-control", stylesheet)
         self.assertIn(".rush-line", stylesheet)
@@ -1162,6 +1176,8 @@ class MenuAppTestCase(unittest.TestCase):
         self.assertIn("Clear name", name_suggestions)
         self.assertIn("name-input-wrap", name_suggestions)
         self.assertIn("party-name-selected", name_suggestions)
+        self.assertIn('addEventListener("pointerdown"', name_suggestions)
+        self.assertIn("query ? candidates.slice(0, 5) : candidates", name_suggestions)
 
         host_js_response = self.client.get("/static/js/host.js")
         host_js = host_js_response.text

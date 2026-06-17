@@ -9,6 +9,9 @@ function createSuggestionButton(name, input, panel) {
   const button = document.createElement("button");
   button.type = "button";
   button.textContent = name;
+  button.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+  });
   button.addEventListener("click", () => {
     input.value = name;
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -29,6 +32,9 @@ function createClearButton(input, renderSuggestions) {
   button.setAttribute("aria-label", "Clear name");
   button.innerHTML = '<span aria-hidden="true">&times;</span>';
   button.hidden = input.value.length === 0;
+  button.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+  });
   button.addEventListener("click", () => {
     input.value = "";
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -57,12 +63,11 @@ function enhanceNameInput(input) {
 
   function renderSuggestions() {
     const query = normalizeName(input.value);
-    const matches = guestNameOptions
-      .filter((name) => {
-        const option = normalizeName(name);
-        return option && option !== query && (!query || option.includes(query));
-      })
-      .slice(0, 5);
+    const candidates = guestNameOptions.filter((name) => {
+      const option = normalizeName(name);
+      return option && option !== query && (!query || option.includes(query));
+    });
+    const matches = query ? candidates.slice(0, 5) : candidates;
 
     panel.replaceChildren();
     matches.forEach((name) => {

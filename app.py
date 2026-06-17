@@ -764,17 +764,18 @@ def remember_guest_names(names: list[str]) -> None:
         )
 
 
-def load_guest_name_options(limit: int = 50) -> list[str]:
-    rows = get_db().execute(
-        """
+def load_guest_name_options(limit: int | None = None) -> list[str]:
+    query = """
         SELECT name
         FROM guest_names
         WHERE name != ? COLLATE NOCASE
         ORDER BY last_seen_at DESC, name COLLATE NOCASE
-        LIMIT ?
-        """,
-        (UNASSIGNED_RECIPIENT, limit),
-    ).fetchall()
+        """
+    params: list[object] = [UNASSIGNED_RECIPIENT]
+    if limit is not None:
+        query += " LIMIT ?"
+        params.append(limit)
+    rows = get_db().execute(query, params).fetchall()
     return [row["name"] for row in rows]
 
 

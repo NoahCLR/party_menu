@@ -649,6 +649,9 @@ img {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+  max-height: min(42vh, 260px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .name-suggestions[hidden] {
